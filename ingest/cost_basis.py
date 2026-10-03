@@ -82,12 +82,14 @@ def _supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
 
 
-def paginated(sb, table, sel, **filters):
+def paginated(sb, table, sel, order=None, **filters):
     out, off = [], 0
     while True:
         q = sb.table(table).select(sel)
         for k, v in filters.items():
             q = q.eq(k, v)
+        if order:  # offset paging over a view needs a stable order
+            q = q.order(order)
         b = q.range(off, off + 999).execute()
         if not b.data:
             break
@@ -177,13 +179,15 @@ def main() -> None:
     print(f"  {len(name_to_ticker):,} unique normalized names mapped", flush=True)
 
     # ─── Pull holdings ─────────────────────────────────────────────────
-    print("Loading holdings_13f…", flush=True)
+    # Effective long-equity rows (migration 023): restated quarters count once,
+    # options and bond principal excluded.
+    print("Loading holdings_13f_effective…", flush=True)
     all_h: list[dict[str, Any]] = []
     for c in filer_ciks:
         all_h.extend(paginated(
-            sb, "holdings_13f",
+            sb, "holdings_13f_effective",
             "cik,ticker,issuer_name,period_of_report,shares,value_usd",
-            cik=c,
+            order="id", cik=c,
         ))
     print(f"  {len(all_h):,} rows across {len(filer_ciks)} filers", flush=True)
 

@@ -29,6 +29,21 @@ confluence:
   signal_threshold: 3.0         # minimum score to emit an entry signal
 
 # ──────────────────────────────────────────────────────────────────────────
+# Insider-buy filters — which Form 4 open-market buys count toward the
+# insider cluster (read by ingest/compute_buy_signals.py; eng review R7).
+# Each insider's buys of a ticker in the 30-day window are judged together.
+# Excluded insiders are listed with the reason in the signal's components
+# (CLAUDE.md §2.4). Unknown inputs never exclude anyone. Set a value to
+# false / 0 to switch that filter off — no code change needed.
+# ──────────────────────────────────────────────────────────────────────────
+# All off (user, 2026-10-03): every open-market insider buy counts.
+insider_filters:
+  officers_directors_only: false  # true: pure 10% holders / "Other" aren't company insiders
+  exclude_10b5_1: false           # true: drop pre-scheduled plan buys (~0% excess return, Cohen-Malloy-Pomorski 2012)
+  min_value_usd: 0                # e.g. 25000: drop token buys (OpenInsider convention, not a measured cutoff)
+  min_stake_growth_pct: 0         # e.g. 0.10: buy must grow the insider's holding ≥10% (weakest evidence)
+
+# ──────────────────────────────────────────────────────────────────────────
 # Universe filter — FOMO suppression (CLAUDE.md §2.2)
 # Applied AFTER scoring but BEFORE surfacing as a signal.
 # ──────────────────────────────────────────────────────────────────────────

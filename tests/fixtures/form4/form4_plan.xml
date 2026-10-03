@@ -1,0 +1,217 @@
+<?xml version="1.0"?>
+<ownershipDocument>
+
+    <schemaVersion>X0609</schemaVersion>
+
+    <documentType>4</documentType>
+
+    <periodOfReport>2026-03-27</periodOfReport>
+
+    <notSubjectToSection16>false</notSubjectToSection16>
+
+    <issuer>
+        <issuerCik>0001415921</issuerCik>
+        <issuerName>Navios Maritime Partners L.P.</issuerName>
+        <issuerTradingSymbol>NMM</issuerTradingSymbol>
+        <issuerForeignTradingSymbol></issuerForeignTradingSymbol>
+    </issuer>
+
+    <reportingOwner>
+        <reportingOwnerId>
+            <rptOwnerCik>0001310495</rptOwnerCik>
+            <rptOwnerName>Frangou Angeliki</rptOwnerName>
+        </reportingOwnerId>
+        <reportingOwnerAddress>
+            <rptOwnerNonUSAddressFlag>true</rptOwnerNonUSAddressFlag>
+            <rptOwnerStreet1>C/O NAVIOS SHIPMANAGEMENT INC.</rptOwnerStreet1>
+            <rptOwnerStreet2>85 AKTI MIAOULI</rptOwnerStreet2>
+            <rptOwnerCity>PIRAEUS</rptOwnerCity>
+            <rptOwnerNonUSStateTerritory>GREECE</rptOwnerNonUSStateTerritory>
+            <rptOwnerCountry>J3</rptOwnerCountry>
+            <rptOwnerZipCode>18538</rptOwnerZipCode>
+            <rptOwnerStateDescription>GREECE</rptOwnerStateDescription>
+        </reportingOwnerAddress>
+        <reportingOwnerRelationship>
+            <isDirector>true</isDirector>
+            <isOfficer>true</isOfficer>
+            <isTenPercentOwner>true</isTenPercentOwner>
+            <isOther>false</isOther>
+            <officerTitle>See Remarks</officerTitle>
+        </reportingOwnerRelationship>
+    </reportingOwner>
+
+    <aff10b5One>true</aff10b5One>
+
+    <nonDerivativeTable>
+        <nonDerivativeTransaction>
+            <securityTitle>
+                <value>Common Unit</value>
+            </securityTitle>
+            <transactionDate>
+                <value>2026-03-27</value>
+            </transactionDate>
+            <transactionCoding>
+                <transactionFormType>4</transactionFormType>
+                <transactionCode>P</transactionCode>
+                <equitySwapInvolved>false</equitySwapInvolved>
+                <footnoteId id="F1"/>
+            </transactionCoding>
+            <transactionAmounts>
+                <transactionShares>
+                    <value>1255</value>
+                </transactionShares>
+                <transactionPricePerShare>
+                    <value>65.7794</value>
+                    <footnoteId id="F2"/>
+                </transactionPricePerShare>
+                <transactionAcquiredDisposedCode>
+                    <value>A</value>
+                </transactionAcquiredDisposedCode>
+            </transactionAmounts>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>4683743</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>See footnote</value>
+                    <footnoteId id="F3"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeTransaction>
+        <nonDerivativeTransaction>
+            <securityTitle>
+                <value>Common Unit</value>
+            </securityTitle>
+            <transactionDate>
+                <value>2026-03-30</value>
+            </transactionDate>
+            <transactionCoding>
+                <transactionFormType>4</transactionFormType>
+                <transactionCode>P</transactionCode>
+                <equitySwapInvolved>false</equitySwapInvolved>
+                <footnoteId id="F1"/>
+            </transactionCoding>
+            <transactionAmounts>
+                <transactionShares>
+                    <value>1276</value>
+                </transactionShares>
+                <transactionPricePerShare>
+                    <value>64.5389</value>
+                    <footnoteId id="F2"/>
+                </transactionPricePerShare>
+                <transactionAcquiredDisposedCode>
+                    <value>A</value>
+                </transactionAcquiredDisposedCode>
+            </transactionAmounts>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>4685019</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>See footnote</value>
+                    <footnoteId id="F4"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeTransaction>
+        <nonDerivativeTransaction>
+            <securityTitle>
+                <value>Common Unit</value>
+            </securityTitle>
+            <transactionDate>
+                <value>2026-03-31</value>
+            </transactionDate>
+            <transactionCoding>
+                <transactionFormType>4</transactionFormType>
+                <transactionCode>P</transactionCode>
+                <equitySwapInvolved>false</equitySwapInvolved>
+                <footnoteId id="F1"/>
+            </transactionCoding>
+            <transactionAmounts>
+                <transactionShares>
+                    <value>1295</value>
+                </transactionShares>
+                <transactionPricePerShare>
+                    <value>66.6046</value>
+                    <footnoteId id="F2"/>
+                </transactionPricePerShare>
+                <transactionAcquiredDisposedCode>
+                    <value>A</value>
+                </transactionAcquiredDisposedCode>
+            </transactionAmounts>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>4686314</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>See footnote</value>
+                    <footnoteId id="F5"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeTransaction>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>Common Unit</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>366766</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>D</value>
+                </directOrIndirectOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+        <nonDerivativeHolding>
+            <securityTitle>
+                <value>General Partnership Unit</value>
+            </securityTitle>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>622296</value>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>See footnote</value>
+                    <footnoteId id="F6"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeHolding>
+    </nonDerivativeTable>
+
+    <footnotes>
+        <footnote id="F1">The transactions reported herein were made pursuant to a Rule 10b5-1 trading plan between Raymar Investments S.A., an entity affiliated with Ms. Frangou, and UBS Financial Services Inc. adopted on December 9, 2025.</footnote>
+        <footnote id="F2">The transactions reported herein were effected in multiple transactions each day at prices ranging from (1) $65.04 to $66.84 on March 27, 2026; (2) $64.05 to $64.92 on March 30, 2026 and (3) $66.20 to $67.15 on March 31, 2026. The prices reported above reflect the weighted average purchase prices on each such day for the transactions reported herein. The Reporting Person hereby undertakes to provide upon request to the Staff of the Securities and Exchange Commission, the issuer, or any security holder of the issuer full information regarding the number of shares and the prices at which these reported transactions were effected each day.</footnote>
+        <footnote id="F3">The number of common units beneficially owned by Ms. Frangou includes (i) 3,183,199 common units owned indirectly through N Shipmanagement Acquisition Corp., an entity affiliated with her; (ii) 1,489,115 common units in the aggregate owned indirectly through three other entities affiliated with her and (iii) 11,429 common units owned through Raymar Investments S.A., an entity affiliated with Ms. Frangou, pursuant to a Rule 10b5-1 trading plan with UBS Financial Services Inc as of March 27, 2026.</footnote>
+        <footnote id="F4">The number of common units beneficially owned by Ms. Frangou includes (i) 3,183,199 common units owned indirectly through N Shipmanagement Acquisition Corp., an entity affiliated with her; (ii) 1,489,115 common units in the aggregate owned indirectly through three other entities affiliated with her and (iii) 12,705 common units owned through Raymar Investments S.A., an entity affiliated with Ms. Frangou, pursuant to a Rule 10b5-1 trading plan with UBS Financial Services Inc as of March 30, 2026.</footnote>
+        <footnote id="F5">The number of common units beneficially owned by Ms. Frangou includes (i) 3,183,199 common units owned indirectly through N Shipmanagement Acquisition Corp., an entity affiliated with her; (ii) 1,489,115 common units in the aggregate owned indirectly through three other entities affiliated with her and (iii) 14,000 common units owned through Raymar Investments S.A., an entity affiliated with Ms. Frangou, pursuant to a Rule 10b5-1 trading plan with UBS Financial Services Inc as of March 31, 2026.</footnote>
+        <footnote id="F6">Olympos Maritime Ltd., an entity affiliated with Ms. Frangou, is the general partner (the &quot;General Partner&quot;) of Navios Maritime Partners L.P. (&quot;NMM&quot;). As of March 31, 2026, the General Partner owns 622,296 general partnership units, representing an approximately 2.1% ownership interest in NMM based on all outstanding common units and general partnership units.</footnote>
+    </footnotes>
+
+    <remarks>Chief Executive Officer &amp; Chairwoman of the Board</remarks>
+
+    <ownerSignature>
+        <signatureName>/s/ Todd Mason, by POA from Angeliki Frangou, Chairwoman of the Board, Chief Executive Officer and Director</signatureName>
+        <signatureDate>2026-03-31</signatureDate>
+    </ownerSignature>
+</ownershipDocument>

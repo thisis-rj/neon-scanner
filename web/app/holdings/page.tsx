@@ -41,7 +41,7 @@ type Holding = {
   issuer_name: string | null;
   shares: number | null;
   value_usd: number | null;
-  put_call: string | null;  // 'Put' / 'Call' / null. Options are SHORT/HEDGE bets — we filter these out of long-holdings display.
+  put_call: string | null;  // Always null: holdings_recent() reads holdings_13f_effective, which drops option rows (migration 023).
 };
 
 // Cost-basis estimate per (filer, ticker) — keyed `${cik}|${ticker}`.
@@ -133,41 +133,33 @@ async function fetchHoldings(): Promise<{
     if (from > 60000) break; // safety cap. RPC returns ~25K rows (2 periods × all filers); 60K is generous headroom.
   }
 
-  // Dedupe amendments: for each (cik, period_of_report) keep ONLY rows from
-  // the latest filed_at. SEC 13F-HR/A amendments supersede the original;
-  // without this we triple-count positions when Oaktree files 13F + 2
-  // amendments (caught May 21 — TORM PLC was appearing 3× in their card).
-  const latestFiledByFilerPeriod = new Map<string, string>();  // `${cik}|${period}` → max filed_at
-  for (const h of out) {
-    const k = `${h.cik}|${h.period_of_report}`;
-    const cur = latestFiledByFilerPeriod.get(k);
-    if (!cur || h.filed_at > cur) latestFiledByFilerPeriod.set(k, h.filed_at);
-  }
-  const deduped = out.filter((h) =>
-    h.filed_at === latestFiledByFilerPeriod.get(`${h.cik}|${h.period_of_report}`),
-  );
+  // holdings_recent() reads holdings_13f_effective (migration 023), which
+  // already resolves amendments per (cik, period): a RESTATEMENT replaces the
+  // original (the Oaktree 13F + 2 amendments case shows each position once),
+  // a NEW HOLDINGS amendment adds to it (Berkshire Q1-2025 = 110 + 4). Rows can
+  // therefore come from two filings in one quarter — don't dedupe by filed_at here.
 
   // For each filer, collect positions GROUPED BY period so we can diff the
   // latest quarter vs the prior quarter (CLAUDE.md §6.1: emit new/add/trim/exit).
   const byFilerByPeriod = new Map<string, Map<string, Holding[]>>();
   const filerMeta = new Map<string, { name: string; filedAt: Record<string, string> }>();
-  for (const h of deduped) {
+  for (const h of out) {
     if (!byFilerByPeriod.has(h.cik)) byFilerByPeriod.set(h.cik, new Map());
     const periods = byFilerByPeriod.get(h.cik)!;
     if (!periods.has(h.period_of_report)) periods.set(h.period_of_report, []);
     periods.get(h.period_of_report)!.push(h);
     if (!filerMeta.has(h.cik)) filerMeta.set(h.cik, { name: h.filer_name ?? h.cik, filedAt: {} });
-    filerMeta.get(h.cik)!.filedAt[h.period_of_report] = h.filed_at;
+    const filedAt = filerMeta.get(h.cik)!.filedAt;
+    if (!filedAt[h.period_of_report] || h.filed_at > filedAt[h.period_of_report]) filedAt[h.period_of_report] = h.filed_at;
   }
 
-  // Aggregate by issuer (case-normalized name). Filters options (put/call)
-  // since those are short/hedge bets, not long holdings. Aggregating by
+  // Aggregate by issuer (case-normalized name). Options and bond principal are
+  // already excluded by the view. Aggregating by
   // issuer collapses cases where one issuer has multiple CUSIPs (e.g.
   // Chesapeake legacy CUSIP + post-merger Expand Energy CUSIP).
   function aggregateByIssuer(positions: Holding[]): Holding[] {
     const m = new Map<string, Holding>();
     for (const p of positions) {
-      if (p.put_call) continue;  // skip puts/calls
       const key = normIssuer(p.issuer_name);
       if (!key) continue;
       const existing = m.get(key);

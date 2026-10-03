@@ -46,6 +46,7 @@ The system has two cloud surfaces. Both are free-tier-friendly.
 - Daily at **22:00 UTC**, Monday–Friday (= 6 PM ET winter / 5 PM ET summer — after market close).
 - N-PORT XML refresh only runs Mondays (weekly is plenty since filings dribble in).
 - `dera-refresh` job is manual-only — fire it via "Run workflow" when SEC publishes a new quarter (~4x/year, around early Feb/May/Aug/Nov).
+- The `sec-edgar` and `dera-refresh` jobs run `python -m pytest -q` first; a failing parser/scorer test stops the job before it writes anything. The separate `Tests` workflow (`.github/workflows/tests.yml`) runs the same tests plus the PGlite view tests on every push.
 
 ### Free tier budget
 
@@ -74,6 +75,7 @@ Our usage: ~3 min/day × 22 weekdays ≈ **66 min/month**. ~3% of the budget.
 
 - Push to `main` → production deploy. Push to any other branch (or open a PR) → preview deploy at its own URL, linked from the PR.
 - `scripts/deploy.sh "msg"` = commit + push (plus an empty keep-alive commit when nothing changed — see §1 on the 60-day cron rule).
+- Schema migrations: on `main`, `scripts/deploy.sh` applies pending migrations to production (`python -m ingest.migrate`, needs `SUPABASE_PAT` in `.env`) **before** it pushes, so pages that read a new view or column don't error until the nightly job migrates. It refuses to run if `schema/migrations` has uncommitted changes, and skips migrations on other branches (previews must not change production's schema). Merging a PR on GitHub skips this script: apply the PR's migrations before merging it.
 - Never `vercel --prod` by hand: production must always equal `main`.
 - Rollback: Vercel dashboard → Deployments → previous production deploy → "Promote to Production", then revert the commit on `main` so git matches.
 

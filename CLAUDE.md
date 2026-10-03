@@ -107,9 +107,11 @@ There will be weeks where nothing surfaces. That is correct behavior. Do not add
 
 - `tracked_filers` — the universe of 13F/13D filers we watch (CIK, name, category, multiplier).
 - `filings_raw` — every fetched filing, deduped by accession number. Source of truth.
-- `holdings_13f` — flattened per-position rows from 13F-HR filings.
+- `holdings_13f` — flattened per-position rows from 13F-HR/A filings, as reported (includes options and bond principal).
+- `holdings_13f_effective` (materialized view; the rule itself is the view `holdings_13f_effective_live`) — the rows every reader uses: a filer's actual long-equity holdings per quarter. Refreshed by `refresh_holdings_effective()` (§6.1).
 - `events_13d` — 13D/G filings parsed for activist stake disclosures.
 - `events_form4` — insider transactions.
+- `insider_transactions` — universe-wide Form 4 open-market buys the scorer reads for insider clusters (§6.3), with `is_10b5_1`, `shares_owned_after`, `direct_indirect` (migration 024).
 - `tickers` — the investable universe with the latest snapshot of price + return windows.
 - `signals` — emitted entry signals with score breakdown stored as JSONB.
 - `exit_signals` — emitted exit signals against user positions.
@@ -141,6 +143,7 @@ If a future maintainer wants to add or remove a filer, the test is:
 ### 6.1 13F-HR (45-day delay; surface this caveat in UI)
 - Diff each filer's current 13F vs prior. Emit `new_position`, `add`, `trim`, `exit`.
 - A position is "new" if the ticker wasn't in the prior 13F. Adds/trims are ≥10% share-count change.
+- **Read holdings only through `holdings_13f_effective`** (rule: migration 023, now the view `holdings_13f_effective_live`; readers use the stored copy from migration 025). **Anything that writes `holdings_13f` must refresh the stored copy afterwards** with `ingest.holdings_effective.refresh()` (`parse_13f` and `backfill_tickers` do; by hand: `python -m ingest.holdings_effective`), or readers keep seeing the old rows. Don't call the `refresh_holdings_effective()` RPC through PostgREST: its statement timeout cancels the refresh. Per (filer, quarter) it takes the latest original-or-RESTATEMENT filing that has rows, plus NEW HOLDINGS amendments filed after it, and drops put/call rows and PRN rows (`sh_type`; bond principal in dollars, not shares). A RESTATEMENT replaces the original; a NEW HOLDINGS amendment only adds the positions the filer had kept confidential (Berkshire Q1-2025: 110 + 4), minus rows that copy the base or an earlier amendment. A "NEW HOLDINGS" that repeats at least half of the base's securities (and at least 5) is a mislabelled full re-list and counts as a RESTATEMENT (in the 35 amendments on file, true NEW HOLDINGS repeat 0–1 securities, re-lists 99–100%). Never dedupe "latest filing wins" in a reader — that drops the original when a NEW HOLDINGS amendment exists.
 
 ### 6.2 13D / 13G
 - New 13D from a filer in the `activist` category → highest-weight signal in the system.
@@ -148,8 +151,11 @@ If a future maintainer wants to add or remove a filer, the test is:
 - Amendments (13D/A) parsed but weighted lower than initial.
 
 ### 6.3 Form 4 (insider transactions)
-- Open-market buys by officers/directors. Sales mostly ignored (planned 10b5-1s are noisy).
-- Cluster bonus: ≥3 insiders buying in 30-day window.
+- Open-market buys (code P). Sales ignored.
+- Every insider with an open-market buy of the ticker in the 30-day window counts toward the cluster. `insider_filters` in `config/signal_weights.yml` can narrow this (officer or director; not a Rule 10b5-1 plan buy; minimum total $; minimum stake growth), but all four are switched off by the user's choice. Do not switch them back on without asking.
+- When a filter is on, buys are judged per insider, not per row; unknown inputs never exclude anyone; excluded insiders are stored in `components.insider_cluster.excluded` with the reason and shown on /signals (§2.4; that page is hidden for now as `web/app/signals/page.tsx.disabled`).
+- Cluster scoring: 1 / 2 / 3+ qualifying insiders → 1.5 / 3.5 / 7.0 (+1 each beyond 3).
+- SEC spells flags several ways ("1"/"true", "TenPercentOwner"); parse them with `ingest/form4_fields.py`, never with ad-hoc string checks.
 
 ### 6.4 Confluence scoring
 For each ticker on each day, sum the weighted signals from the last `window_days` (see `config/signal_weights.yml`). Apply per-filer `multiplier`. Output:
@@ -262,8 +268,8 @@ These strings live in the UI, not just this doc.
 - Never add a new composite metric without flagging §2.4.
 - Never add a "discovery" or "trending" surface without flagging §2.2.
 - If the user asks for a feature in §8, push back before implementing.
-- Tests: parsers must have fixture-based tests. Scorers must have unit tests. UI does not need tests for v1.
+- Tests: parsers must have fixture-based tests. Scorers must have unit tests. UI does not need tests for v1. Run `python -m pytest -q` and `cd tests/sql && npm ci && node --test`. Scoring changes: replay old vs new with `scripts/diff_signals.py` and account for every changed ticker.
 - Commits: small, focused, conventional-commits style. One logical change per commit.
 - Building UI: follow [web/AGENTS.md](web/AGENTS.md) — shadcn/ui components, semantic color tokens, never raw Tailwind palette colors.
 - Recent changes and known open issues: [CHANGELOG.md](CHANGELOG.md). Add an entry when you change behavior others rely on.
-- **Deploying = pushing to `main`.** The Vercel project is connected to this repo (root directory `web`): every push to `main` deploys to production, every other branch gets a preview URL. NEVER run `vercel --prod` by hand — production must always be what is on `main`. `scripts/deploy.sh "msg"` commits + pushes (and stamps an empty keep-alive commit when nothing changed). Why commits matter beyond deploys: GitHub auto-disables the `daily-ingest` scheduled workflow after 60 days with no commits (this stalled ingestion for 2 weeks once — last commit 2026-06-02 → cron disabled ~2026-08-02). If the cron ever shows `disabled_inactivity` (`gh workflow list --all`), it needs a manual re-enable in the GitHub UI by a repo admin.
+- **Deploying = pushing to `main`.** The Vercel project is connected to this repo (root directory `web`): every push to `main` deploys to production, every other branch gets a preview URL. NEVER run `vercel --prod` by hand — production must always be what is on `main`. `scripts/deploy.sh "msg"` commits + pushes (and stamps an empty keep-alive commit when nothing changed). On `main` it first applies pending migrations to production (`python -m ingest.migrate`, needs `SUPABASE_PAT` in `.env`) and refuses to run if `schema/migrations` has uncommitted changes; on other branches it skips migrations. Merging a PR on GitHub skips this script, so apply a PR's migrations before merging it. Why commits matter beyond deploys: GitHub auto-disables the `daily-ingest` scheduled workflow after 60 days with no commits (this stalled ingestion for 2 weeks once — last commit 2026-06-02 → cron disabled ~2026-08-02). If the cron ever shows `disabled_inactivity` (`gh workflow list --all`), it needs a manual re-enable in the GitHub UI by a repo admin.

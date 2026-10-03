@@ -15,7 +15,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-// Stock-level view: pivot of holdings_13f by issuer (CUSIP).
+// Stock-level view: pivot of holdings_13f_effective by issuer (CUSIP).
 // Tells you, for each stock, which tracked funds own it and how much.
 // This is the "confluence" lens — stocks held by many smart funds rise to top.
 
@@ -47,9 +47,12 @@ async function fetchAggregated(): Promise<{ stocks: StockRow[]; totalFunds: numb
   let from = 0;
   while (true) {
     const { data, error } = await sb
-      .from("holdings_13f")
+      // Effective long-equity rows (migration 023): amendments resolved,
+      // options and bond principal excluded. Ordered by id too so pages are stable.
+      .from("holdings_13f_effective")
       .select("cik,cusip,issuer_name,shares,value_usd,period_of_report")
       .order("period_of_report", { ascending: false })
+      .order("id", { ascending: true })
       .range(from, from + 999);
     if (error) throw error;
     if (!data || data.length === 0) break;

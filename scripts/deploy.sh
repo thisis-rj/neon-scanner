@@ -22,6 +22,26 @@ cd "$ROOT"
 MSG="${1:-chore: deploy web + keep-alive commit}"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 
+# Apply pending schema migrations BEFORE pushing: a push to main is the
+# production deploy, and a page that queries a new view (e.g. migration 023's
+# holdings_13f_effective) would error until the 22:00 UTC nightly job migrates.
+# Needs SUPABASE_PAT in .env. A failed migration stops the deploy (set -e).
+# Gap: merging a PR on GitHub skips this script, so run it (or
+# `python -m ingest.migrate`) yourself before merging a PR that adds a migration.
+# Only on main (other branches are previews and must not change production's
+# schema), and only with every migration committed: migrate.py records a file
+# by name, so an edited-later draft would be stuck in production.
+if [ "$BRANCH" = "main" ]; then
+  if [ -n "$(git status --porcelain -- schema/migrations)" ]; then
+    echo "✗ Uncommitted changes in schema/migrations — commit them first." >&2
+    exit 1
+  fi
+  PY="$ROOT/.venv/bin/python"; [ -x "$PY" ] || PY=python3
+  "$PY" -m ingest.migrate
+else
+  echo "• Not on main: skipping production migrations (preview deploy)."
+fi
+
 git add -A
 if git diff --cached --quiet; then
   # No file changes — still stamp an empty keep-alive commit so the 60-day

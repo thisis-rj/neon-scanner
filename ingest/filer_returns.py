@@ -61,12 +61,14 @@ def resolve(issuer: str | None, n2t: dict[str, str]) -> str | None:
     return n2t.get(t)
 
 
-def paginate(sb: Client, table: str, sel: str, **filt) -> list[dict[str, Any]]:
+def paginate(sb: Client, table: str, sel: str, order=None, **filt) -> list[dict[str, Any]]:
     out, off = [], 0
     while True:
         q = sb.table(table).select(sel)
         for k, v in filt.items():
             q = q.eq(k, v)
+        if order:  # offset paging over a view needs a stable order
+            q = q.order(order)
         b = q.range(off, off + 999).execute()
         if not b.data:
             break
@@ -100,8 +102,10 @@ def main() -> None:
     print(f"resolver: {len(n2t)} names, {len(cmap)} cusips, {len(price)} prices, {len(vwap)} vwaps", flush=True)
 
     # All holdings grouped by (cik, period)
-    print("loading holdings_13f…", flush=True)
-    holds = paginate(sb, "holdings_13f", "cik,period_of_report,cusip,issuer_name,shares,value_usd")
+    # Effective long-equity rows (migration 023): restated quarters count once,
+    # options and bond principal excluded.
+    print("loading holdings_13f_effective…", flush=True)
+    holds = paginate(sb, "holdings_13f_effective", "cik,period_of_report,cusip,issuer_name,shares,value_usd", order="id")
     by_cp: dict[tuple[str, str], list[dict]] = defaultdict(list)
     periods_by_cik: dict[str, set[str]] = defaultdict(set)
     for h in holds:
