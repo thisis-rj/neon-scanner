@@ -151,8 +151,8 @@ If a future maintainer wants to add or remove a filer, the test is:
 
 ### 6.3 Form 4 (insider transactions)
 - Open-market buys (code P). Sales ignored.
-- An insider counts toward the cluster only if their buys of the ticker in the 30-day window pass `insider_filters` in `config/signal_weights.yml`: officer or director; not a Rule 10b5-1 plan buy; ≥ $25k in total; grows their holding ≥ 10% (first purchase passes). Buys are judged per insider, not per row. Unknown inputs never exclude anyone.
-- Excluded insiders are stored in `components.insider_cluster.excluded` with the reason and shown on /signals (§2.4).
+- Every insider with an open-market buy of the ticker in the 30-day window counts toward the cluster. `insider_filters` in `config/signal_weights.yml` can narrow this (officer or director; not a Rule 10b5-1 plan buy; minimum total $; minimum stake growth), but all four are switched off by the user's choice. Do not switch them back on without asking.
+- When a filter is on, buys are judged per insider, not per row; unknown inputs never exclude anyone; excluded insiders are stored in `components.insider_cluster.excluded` with the reason and shown on /signals (§2.4).
 - Cluster scoring: 1 / 2 / 3+ qualifying insiders → 1.5 / 3.5 / 7.0 (+1 each beyond 3).
 - SEC spells flags several ways ("1"/"true", "TenPercentOwner"); parse them with `ingest/form4_fields.py`, never with ad-hoc string checks.
 

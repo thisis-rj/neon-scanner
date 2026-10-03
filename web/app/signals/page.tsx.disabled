@@ -402,8 +402,8 @@ export default async function SignalsPage({
       </TableCard>
 
       <p className="max-w-4xl text-xs leading-relaxed text-pretty text-muted-foreground">
-        Score components: insider cluster (Lakonishok-Lee, 30-day window; counts officers and directors
-        buying $25k+ outside a 10b5-1 plan that grows their stake 10%+), 13F new positions, 13F adds
+        Score components: insider cluster (Lakonishok-Lee, 30-day window; counts every insider making an
+        open-market buy), 13F new positions, 13F adds
         (≥20%), activist 13D, share-count velocity (≥2× quarter over quarter), cross-quarter confluence
         (3+ distinct filers across 2 quarters), plus a +5 multi-source bonus when 3+ types fire. Refreshed
         nightly. Returns from yfinance.
