@@ -10,6 +10,13 @@ thousands; some filers still report inconsistently. Downstream code
 should compute its own checks against share count × price if precision
 matters.)
 
+Amendments (13F-HR/A): the cover page (primary_doc.xml) says whether the
+amendment is a RESTATEMENT (replaces the original) or NEW HOLDINGS (adds
+positions to it). We store that on filings_raw.amendment_type; the
+holdings_13f_effective view uses it to decide replace vs union. If the
+cover page can't be read the column stays NULL and the view treats the
+filing as a restatement (the pre-2026-10 behavior).
+
 Idempotent: re-running re-parses any filing by deleting the existing
 holdings_13f rows for that filing_id before re-inserting. So resuming
 after a crash is safe, and re-parsing after a parser bug-fix is too.
@@ -77,33 +84,53 @@ def _localname(tag: str) -> str:
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
-def find_info_table_url(cik: str, accession: str) -> str | None:
-    """Use the filing's index.json to locate the information-table XML.
+def _filing_base_url(cik: str, accession: str) -> str:
+    return f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}"
+
+
+def list_filing_xmls(cik: str, accession: str) -> list[str] | None:
+    """XML file names in the filing, from its index.json (None if the index is unavailable).
 
     13F filings have several files: a primary doc cover page (XML), an
     information table (XML, contains positions), and sometimes index files.
-    We want the information table specifically.
     """
-    acc_nodash = accession.replace("-", "")
-    cik_int = int(cik)
-    idx_url = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}/index.json"
-    r = _polite_get(idx_url, HEADERS_JSON)
+    r = _polite_get(f"{_filing_base_url(cik, accession)}/index.json", HEADERS_JSON)
     if r.status_code != 200:
         return None
     files = r.json().get("directory", {}).get("item", [])
-    xmls = [f["name"] for f in files if f["name"].endswith(".xml")]
+    return [f["name"] for f in files if f["name"].endswith(".xml")]
+
+
+def pick_info_table(xmls: list[str]) -> str | None:
+    """Heuristic: the XML that isn't the cover page/header, preferring 'info'/'tab' names."""
     if not xmls:
         return None
-
-    # Heuristic: pick a file that's clearly the info table.
-    #   - exclude primary_doc / header / submission cover files
-    #   - prefer files with 'info' or 'table' in the name
     candidates = [n for n in xmls if "primary" not in n.lower() and "header" not in n.lower()]
     if not candidates:
         candidates = xmls
     preferred = [n for n in candidates if "info" in n.lower() or "tab" in n.lower()]
-    pick = preferred[0] if preferred else candidates[0]
-    return f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}/{pick}"
+    return preferred[0] if preferred else candidates[0]
+
+
+def pick_primary_doc(xmls: list[str]) -> str | None:
+    """The cover page XML (SEC names it primary_doc.xml)."""
+    return next((n for n in xmls if "primary" in n.lower()), None)
+
+
+AMENDMENT_TYPES = {"RESTATEMENT", "NEW HOLDINGS"}
+
+
+def parse_amendment_type(xml_bytes: bytes) -> str | None:
+    """Read coverPage/amendmentInfo/amendmentType: 'RESTATEMENT', 'NEW HOLDINGS' or None."""
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return None
+    for el in root.iter():
+        if _localname(el.tag) == "amendmentType":
+            v = " ".join((el.text or "").split()).upper()
+            return v if v in AMENDMENT_TYPES else None
+    return None
 
 
 def parse_info_table(xml_bytes: bytes) -> list[dict[str, Any]]:
@@ -160,19 +187,21 @@ def parse_info_table(xml_bytes: bytes) -> list[dict[str, Any]]:
             "value_usd": value_num,
             "shares": shares_int,
             "put_call": put_call,
-            # sshPrnamtType ('SH' for shares, 'PRN' for principal amount of debt)
-            # not stored separately — folded into shares column for now
-            "_sh_type": sh_type,
+            # 'SH' = shares, 'PRN' = principal amount of debt (dollars, not shares).
+            # Readers must exclude PRN rows; holdings_13f_effective does.
+            "sh_type": sh_type.upper() if sh_type else None,
         })
     return rows
 
 
 def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
     """Parse one 13F filing into holdings_13f rows. Returns (n_rows, error)."""
-    info_url = find_info_table_url(filing["cik"], filing["accession_number"])
-    if not info_url:
+    xmls = list_filing_xmls(filing["cik"], filing["accession_number"])
+    info_name = pick_info_table(xmls or [])
+    if not info_name:
         return 0, "no info table file found"
-    r = _polite_get(info_url, HEADERS_XML)
+    base = _filing_base_url(filing["cik"], filing["accession_number"])
+    r = _polite_get(f"{base}/{info_name}", HEADERS_XML)
     if r.status_code != 200:
         return 0, f"info table HTTP {r.status_code}"
     parsed = parse_info_table(r.content)
@@ -180,6 +209,9 @@ def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
         return 0, "info table empty or unparseable"
 
     sb = _supabase()
+    if filing.get("form_type") == "13F-HR/A":
+        record_amendment_type(sb, filing, base, xmls or [])
+
     # Idempotent: delete existing rows for this filing, then insert fresh.
     sb.table("holdings_13f").delete().eq("filing_id", filing["id"]).execute()
 
@@ -195,6 +227,7 @@ def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
             "shares": p["shares"],
             "value_usd": p["value_usd"],
             "put_call": p["put_call"],
+            "sh_type": p["sh_type"],
         })
 
     # Batch insert. Supabase accepts large batches but ~500/request is safer.
@@ -202,6 +235,24 @@ def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
         sb.table("holdings_13f").insert(rows_to_insert[i:i + 500]).execute()
 
     return len(rows_to_insert), None
+
+
+def record_amendment_type(sb: Client, filing: dict[str, Any], base: str, xmls: list[str]) -> None:
+    """Store RESTATEMENT / NEW HOLDINGS on filings_raw. Failures only warn: holdings still parse."""
+    primary = pick_primary_doc(xmls)
+    amendment_type = None
+    if primary:
+        try:
+            r = _polite_get(f"{base}/{primary}", HEADERS_XML)
+            if r.status_code == 200:
+                amendment_type = parse_amendment_type(r.content)
+        except requests.RequestException as e:
+            print(f"  WARN {filing['accession_number']}: cover page fetch failed ({e})", file=sys.stderr)
+    if amendment_type is None:
+        print(f"  WARN {filing['accession_number']}: amendment type unknown; treated as RESTATEMENT",
+              file=sys.stderr)
+        return
+    sb.table("filings_raw").update({"amendment_type": amendment_type}).eq("id", filing["id"]).execute()
 
 
 def get_unparsed_filings(sb: Client, reparse: bool = False) -> list[dict[str, Any]]:
@@ -213,7 +264,7 @@ def get_unparsed_filings(sb: Client, reparse: bool = False) -> list[dict[str, An
     while True:
         b = (
             sb.table("filings_raw")
-            .select("id,accession_number,cik,filer_name,period_of_report")
+            .select("id,accession_number,cik,filer_name,period_of_report,form_type")
             .in_("form_type", ["13F-HR", "13F-HR/A"])
             .order("period_of_report", desc=True)
             .range(offset, offset + 999)
