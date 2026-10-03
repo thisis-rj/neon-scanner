@@ -22,6 +22,7 @@ const NAV = [
   { href: "/corporate", label: "Corporate events" },
   { href: "/earnings", label: "Earnings" },
   { href: "/my-stocks", label: "My Stocks" },
+  { href: "/lag7", label: "Lag7" },
 ] as const;
 
 function isActive(pathname: string, href: string) {

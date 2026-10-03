@@ -66,6 +66,23 @@ export function fmtUsd(n: number | null | undefined): string {
   return `$${n.toFixed(0)}`;
 }
 
+/** $124,312 — exact dollars for ledgers and order sizes. Null → "—". */
+export function fmtUsdExact(n: number | null | undefined, cents = false): string {
+  if (n == null) return "—";
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: cents ? 2 : 0,
+    maximumFractionDigits: cents ? 2 : 0,
+  });
+}
+
+/** 412.3712 — fractional share counts, up to 4 decimals. Null → "—". */
+export function fmtSharesExact(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+}
+
 /** 1.2M · 45K · 950. Null → "—". */
 export function fmtShares(n: number | null | undefined): string {
   if (n == null) return "—";

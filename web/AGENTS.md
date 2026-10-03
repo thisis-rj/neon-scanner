@@ -16,7 +16,8 @@ The frontend was rebuilt on **shadcn/ui** on 2026-10-03 (see `/CHANGELOG.md`). E
 | Page title + explainer + facts row | `components/app/page-header.tsx` → `PageHeader` |
 | Titled card holding a full-bleed table | `components/app/table-card.tsx` → `TableCard` |
 | Table cells | `components/app/cells.tsx` → `Pct` (signed %, colored), `TierBadge` (S/A/B/C), `SecLink` (sec.gov ↗), `DateCell`, `Ticker`, `Hint` (dotted label + tooltip), `ThirteenFDelayNote` |
-| Numbers | `lib/format.ts` → `fmtUsd`, `fmtShares`, `fmtSignedPct`, `daysAgo`, `shortDate`. Don't write new per-page formatters. |
+| Numbers | `lib/format.ts` → `fmtUsd`, `fmtUsdExact`, `fmtShares`, `fmtSharesExact`, `fmtSignedPct`, `daysAgo`, `shortDate`. Don't write new per-page formatters. |
+| Charts | `components/ui/chart.tsx` (shadcn, recharts) — see `components/app/mag7/*-chart.tsx`. Series colors `--chart-1..3` only, in that fixed order; legend + table always present. |
 | Nav | add the route to `NAV` in `components/app/site-header.tsx` (desktop + mobile menu both read it) |
 | Empty / error / loading | `Empty` component · `app/error.tsx` · `app/loading.tsx` (already global) |
 
@@ -31,6 +32,7 @@ Theme lives in `app/globals.css`: light tokens in `:root`, dark in `.dark`. Dark
 | `warning` | activist, trim, caution |
 | `info` | portfolio / corporate-strategic / neutral info |
 | `brand` | Neon chrome only (logo, active nav, focus). **Never** a signal. |
+| `chart-1..3` | chart series identity only (validated set; never a signal) |
 | `muted`, `muted-foreground`, `border`, `card`… | everything else |
 
 ## Page recipe

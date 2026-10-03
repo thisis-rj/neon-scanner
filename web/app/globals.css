@@ -39,6 +39,12 @@
   --color-info: var(--info);
   --color-brand: var(--brand);
 
+  /* Chart series identity only (never a signal). Validated as a 3-slot set
+     with the dataviz skill's validator, both themes, all pairs. */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -72,6 +78,9 @@
   --warning: oklch(0.62 0.14 70);
   --info: oklch(0.55 0.13 240);
   --brand: oklch(0.52 0.22 295);
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
   --radius: 0.625rem;
 }
 
@@ -99,6 +108,9 @@
   --warning: oklch(0.83 0.14 80);
   --info: oklch(0.77 0.11 235);
   --brand: oklch(0.74 0.17 295);
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
 }
 
 @layer base {
