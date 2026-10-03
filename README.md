@@ -31,7 +31,7 @@ Live. The daily ingest runs on GitHub Actions and the UI is deployed on Vercel. 
 
 1. **Clone**
    ```bash
-   git clone https://github.com/solveandbuild-source/neon-scanner.git
+   git clone https://github.com/thisis-rj/neon-scanner.git
    ```
 2. **Secrets** — get the real values from Riya (share them securely, not over chat). Copy the templates and fill them in. Both target files are gitignored — never commit them:
    ```bash

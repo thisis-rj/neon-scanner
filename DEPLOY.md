@@ -59,7 +59,7 @@ Our usage: ~3 min/day × 22 weekdays ≈ **66 min/month**. ~3% of the budget.
 ### One-time setup
 
 1. **Import repo on Vercel**:
-   - vercel.com → New Project → Import Git Repository → pick `solveandbuild-source/neon-scanner` (renamed from portfolio-scanner; GitHub auto-redirects)
+   - vercel.com → New Project → Import Git Repository → pick `thisis-rj/neon-scanner` (moved from `solveandbuild-source` on 2026-10-03; GitHub redirects old URLs)
    - **Root directory**: `web` (the Next.js app lives there, not at repo root)
    - Framework preset: Next.js (auto-detected)
 
