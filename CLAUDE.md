@@ -98,6 +98,7 @@ There will be weeks where nothing surfaces. That is correct behavior. Do not add
 - **Database**: Supabase Postgres. Row-level security on. Schema in [schema/supabase.sql](schema/supabase.sql).
 - **Scheduler**: GitHub Actions cron for polling (cadence in `config/signal_weights.yml`). Avoid long-running workers for v1.
 - **Frontend**: Next.js (App Router) on Vercel. Server components read from Supabase via service role; no client-side DB access.
+- **UI**: shadcn/ui on Tailwind v4 — dark theme, semantic signal color tokens, shared Neon components. The rules live in [web/AGENTS.md](web/AGENTS.md); follow them for any new UI.
 - **Auth**: Single-user. Supabase magic-link, RLS scoped to one `user_id`.
 
 ---
@@ -263,4 +264,6 @@ These strings live in the UI, not just this doc.
 - If the user asks for a feature in §8, push back before implementing.
 - Tests: parsers must have fixture-based tests. Scorers must have unit tests. UI does not need tests for v1.
 - Commits: small, focused, conventional-commits style. One logical change per commit.
+- Building UI: follow [web/AGENTS.md](web/AGENTS.md) — shadcn/ui components, semantic color tokens, never raw Tailwind palette colors.
+- Recent changes and known open issues: [CHANGELOG.md](CHANGELOG.md). Add an entry when you change behavior others rely on.
 - **Deploying = pushing to `main`.** The Vercel project is connected to this repo (root directory `web`): every push to `main` deploys to production, every other branch gets a preview URL. NEVER run `vercel --prod` by hand — production must always be what is on `main`. `scripts/deploy.sh "msg"` commits + pushes (and stamps an empty keep-alive commit when nothing changed). Why commits matter beyond deploys: GitHub auto-disables the `daily-ingest` scheduled workflow after 60 days with no commits (this stalled ingestion for 2 weeks once — last commit 2026-06-02 → cron disabled ~2026-08-02). If the cron ever shows `disabled_inactivity` (`gh workflow list --all`), it needs a manual re-enable in the GitHub UI by a repo admin.

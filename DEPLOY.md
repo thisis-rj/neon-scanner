@@ -18,7 +18,7 @@ The system has two cloud surfaces. Both are free-tier-friendly.
                  │ reads
                  ▼
 ┌─────────────────────────────────────────┐
-│ Vercel (Next.js)                        │   ← /flows dashboard
+│ Vercel (Next.js)                        │   ← web app (every page)
 └─────────────────────────────────────────┘
 ```
 
