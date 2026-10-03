@@ -368,10 +368,9 @@ function PocketBand({ cash, value, usdInr }: { cash: PocketCash; value: number; 
                 </span>
               </div>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground/70">
-              Deposited {fmtInr(cash.deposited)} · withdrew {fmtInr(cash.withdrawn)} (netted out). Return is on net
-              invested, in ₹, and includes the ₹/$ move. Deposits are provisional — tell me to adjust.
-            </p>
+            {/* Vijay: owner asked to drop the deposited/withdrawn/provisional footnote (2026-10-03).
+                The band still reads: net from pocket → value today → total gain. Deposit figures
+                live in portfolio_cashflows and are still provisional until reconciled with INDmoney. */}
           </>
         )}
       </CardContent>
