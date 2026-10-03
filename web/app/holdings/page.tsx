@@ -133,7 +133,7 @@ async function fetchHoldings(): Promise<{
     if (from > 60000) break; // safety cap. RPC returns ~25K rows (2 periods × all filers); 60K is generous headroom.
   }
 
-  // holdings_recent() reads holdings_13f_effective (migration 019), which
+  // holdings_recent() reads holdings_13f_effective (migration 023), which
   // already resolves amendments per (cik, period): a RESTATEMENT replaces the
   // original (the Oaktree 13F + 2 amendments case shows each position once),
   // a NEW HOLDINGS amendment adds to it (Berkshire Q1-2025 = 110 + 4). Rows can

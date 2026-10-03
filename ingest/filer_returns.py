@@ -100,7 +100,7 @@ def main() -> None:
     print(f"resolver: {len(n2t)} names, {len(cmap)} cusips, {len(price)} prices, {len(vwap)} vwaps", flush=True)
 
     # All holdings grouped by (cik, period)
-    # Effective long-equity rows (migration 019): restated quarters count once,
+    # Effective long-equity rows (migration 023): restated quarters count once,
     # options and bond principal excluded.
     print("loading holdings_13f_effective…", flush=True)
     holds = paginate(sb, "holdings_13f_effective", "cik,period_of_report,cusip,issuer_name,shares,value_usd")

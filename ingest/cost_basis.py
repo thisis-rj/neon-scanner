@@ -177,7 +177,7 @@ def main() -> None:
     print(f"  {len(name_to_ticker):,} unique normalized names mapped", flush=True)
 
     # ─── Pull holdings ─────────────────────────────────────────────────
-    # Effective long-equity rows (migration 019): restated quarters count once,
+    # Effective long-equity rows (migration 023): restated quarters count once,
     # options and bond principal excluded.
     print("Loading holdings_13f_effective…", flush=True)
     all_h: list[dict[str, Any]] = []

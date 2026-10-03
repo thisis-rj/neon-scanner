@@ -47,7 +47,7 @@ async function fetchAggregated(): Promise<{ stocks: StockRow[]; totalFunds: numb
   let from = 0;
   while (true) {
     const { data, error } = await sb
-      // Effective long-equity rows (migration 019): amendments resolved,
+      // Effective long-equity rows (migration 023): amendments resolved,
       // options and bond principal excluded. Ordered by id too so pages are stable.
       .from("holdings_13f_effective")
       .select("cik,cusip,issuer_name,shares,value_usd,period_of_report")

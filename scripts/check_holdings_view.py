@@ -1,13 +1,13 @@
 """Check holdings_13f_effective against an independent re-implementation of its rule.
 
-Read-only. Run after `python -m ingest.migrate` (019) and
+Read-only. Run after `python -m ingest.migrate` (023) and
 `python -m ingest.parse_13f --reparse`, before deploying:
 
   python scripts/check_holdings_view.py                      # against Supabase
   python scripts/check_holdings_view.py --snapshot s.json.gz # against a diff_signals snapshot
   python scripts/check_holdings_view.py --timing             # time holdings_recent(2) only
 
-Rule (schema/migrations/019_holdings_effective.sql), per (cik, period):
+Rule (schema/migrations/023_holdings_effective.sql), per (cik, period):
   base  = latest-filed 13F-HR or 13F-HR/A RESTATEMENT (NULL type counts as
           RESTATEMENT) that has at least one holdings row
   extra = 13F-HR/A NEW HOLDINGS filed after the base, or with no base,

@@ -78,7 +78,7 @@ where h.put_call is null
   );
 
 comment on view holdings_13f_effective is
-  'Long equity 13F holdings per filer-quarter: latest original/restatement ∪ later NEW HOLDINGS amendments (rows not already in the base); excludes put/call and PRN rows. See migration 019.';
+  'Long equity 13F holdings per filer-quarter: latest original/restatement ∪ later NEW HOLDINGS amendments (rows not already in the base); excludes put/call and PRN rows. See migration 023.';
 
 -- Holdings page RPC: same signature and columns as migration 015, now reading
 -- the view. put_call is always null here (kept so the page contract is unchanged).

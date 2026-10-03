@@ -1,4 +1,4 @@
-// Tests for the holdings_13f_effective view and holdings_recent() RPC (migration 019).
+// Tests for the holdings_13f_effective view and holdings_recent() RPC (migration 023).
 //
 // Runs the real migration SQL in PGlite (Postgres compiled to WASM), so the
 // view's replace/union rules are checked without touching Supabase.
@@ -8,9 +8,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 
-const MIGRATION = readFileSync(new URL("../../schema/migrations/019_holdings_effective.sql", import.meta.url), "utf8");
+const MIGRATION = readFileSync(new URL("../../schema/migrations/023_holdings_effective.sql", import.meta.url), "utf8");
 
-// Minimal copies of the two tables as they exist before 019 (schema/supabase.sql).
+// Minimal copies of the two tables as they exist before 023 (schema/supabase.sql).
 const BASE_SCHEMA = `
 create table filings_raw (
   id text primary key, accession_number text unique not null, cik text not null,
