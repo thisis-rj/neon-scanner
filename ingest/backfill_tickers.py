@@ -140,8 +140,8 @@ def main() -> None:
 
     print(f"\nDone. Updated {updated:,} rows.", flush=True)
     # Readers use the stored copy (migration 025); carry the new tickers into it.
-    sb.rpc("refresh_holdings_effective").execute()
-    print("Refreshed holdings_13f_effective.", flush=True)
+    from ingest.holdings_effective import refresh
+    print(f"Refreshed holdings_13f_effective in {refresh():.1f}s.", flush=True)
 
 
 if __name__ == "__main__":

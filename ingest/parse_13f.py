@@ -363,8 +363,8 @@ def main() -> None:
 
     if pending:
         # Readers use the stored copy (migration 025); refresh it from the rule.
-        sb.rpc("refresh_holdings_effective").execute()
-        print("Refreshed holdings_13f_effective.")
+        from ingest.holdings_effective import refresh
+        print(f"Refreshed holdings_13f_effective in {refresh():.1f}s.", flush=True)
 
     print(f"\n=== Summary ===")
     print(f"Filings parsed : {len(pending) - len(errors)}/{len(pending)}")

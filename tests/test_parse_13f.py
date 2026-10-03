@@ -173,3 +173,32 @@ def test_parse_one_filing_failed_insert_leaves_no_partial_rows(monkeypatch):
     with pytest.raises(requests.ConnectionError):
         p13f.parse_one_filing(filing)
     assert [o["op"] for o in sb.ops if o["table"] == "holdings_13f"] == ["delete", "delete"]
+
+
+# Value: protects=the stored-copy refresh goes through the Management API with a long timeout and raises on failure; fails_when=it moves back to the PostgREST RPC (statement timeout) or a failed refresh passes silently; why_new=the 2026-10-03 reparse refresh was cancelled by PostgREST's timeout; seam=none
+def test_holdings_effective_refresh_uses_management_api(monkeypatch):
+    import sys
+    import types
+
+    import ingest.holdings_effective as he
+
+    # ingest.migrate exits at import without a real PAT/URL; stand in for it.
+    fake_migrate = types.SimpleNamespace(QUERY_URL="https://api.example/v1/projects/x/database/query",
+                                         HEADERS={"Authorization": "Bearer test"})
+    monkeypatch.setitem(sys.modules, "ingest.migrate", fake_migrate)
+    calls = []
+
+    def fake_post(url, headers, json, timeout):
+        calls.append((url, json["query"], timeout))
+        resp = _Resp(status)
+        resp.text = "" if status < 300 else '{"message":"canceling statement due to statement timeout"}'
+        return resp
+
+    monkeypatch.setattr(he.requests, "post", fake_post)
+    status = 201
+    he.refresh()
+    assert calls[0][1] == "refresh materialized view concurrently holdings_13f_effective;"
+    assert calls[0][0].endswith("/database/query") and calls[0][2] >= 300
+    status = 500
+    with pytest.raises(RuntimeError):
+        he.refresh()
