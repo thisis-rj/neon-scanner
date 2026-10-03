@@ -177,8 +177,8 @@ export async function getStockAnalysis(ticker: string): Promise<{
       }
     }
 
-    const tierRank: Record<string, number> = { S: 0, A: 1, B: 2, C: 3 };
-    holders.sort((a, b) => (tierRank[a.tier ?? "C"] - tierRank[b.tier ?? "C"]) || b.value - a.value);
+    // Largest holder first (by position value). Tier is shown per row, not sorted on.
+    holders.sort((a, b) => b.value - a.value);
   }
 
   // Insider open-market buys (universe-wide, code P) — real dated fills
