@@ -39,6 +39,7 @@ When an exit rule fires, the UI must surface it with equal or greater prominence
 Do not invent composite scores that aren't grounded in observable inputs. Specifically:
 - ❌ No "Neutrality Index", "Conviction Score", "Sentiment Health", or similar synthetic gauges that average unrelated signals into a single number that looks authoritative.
 - ✅ Confluence Score is allowed because it is a transparent weighted sum of named filings within a defined window. Its components must always be visible alongside it.
+- ✅ The /funds strength label (Strong / Moderate / Weak / Net selling) is allowed because it is a printed threshold rule over counts of named 13F changes (`web/lib/fund-flow-rules.ts`). The rule text must stay on the page next to the labels.
 
 If you find yourself reaching for a metric to make a UI element "feel" more decisive, stop. Show the raw signals.
 
@@ -114,7 +115,10 @@ There will be weeks where nothing surfaces. That is correct behavior. Do not add
 - `events_13d` — 13D/G filings parsed for activist stake disclosures.
 - `events_form4` — insider transactions.
 - `insider_transactions` — universe-wide Form 4 open-market buys the scorer reads for insider clusters (§6.3), with `is_10b5_1`, `shares_owned_after`, `direct_indirect` (migration 024).
-- `tickers` — the investable universe with the latest snapshot of price + return windows.
+- `tickers` — the investable universe with the latest snapshot of price + return windows, plus Yahoo `industry` / `sector` labels (migration 025).
+- `stock_splits` — split history (ratio = new shares per old share), so splits don't read as adds or trims.
+- `fund_position_changes` — what each fund did to each stock between its own consecutive 13F filings (opened / added / trimmed / exited). Read only through the `fund_flows()` SQL function (§6.1a).
+- `stock_signal_extras` — insider-cluster and activist-13D columns for /funds, computed with the v6 scorer's rules.
 - `signals` — emitted entry signals with score breakdown stored as JSONB.
 - `exit_signals` — emitted exit signals against user positions.
 - `user_positions` — what the user currently holds. Drives exit-rule monitoring.
@@ -146,6 +150,13 @@ If a future maintainer wants to add or remove a filer, the test is:
 - Diff each filer's current 13F vs prior. Emit `new_position`, `add`, `trim`, `exit`.
 - A position is "new" if the ticker wasn't in the prior 13F. Adds/trims are ≥10% share-count change.
 - **Read holdings only through `holdings_13f_effective`** (rule: migration 023, now the view `holdings_13f_effective_live`; readers use the stored copy from migration 025). **Anything that writes `holdings_13f` must refresh the stored copy afterwards** with `ingest.holdings_effective.refresh()` (`parse_13f` and `backfill_tickers` do; by hand: `python -m ingest.holdings_effective`), or readers keep seeing the old rows. Don't call the `refresh_holdings_effective()` RPC through PostgREST: its statement timeout cancels the refresh. Per (filer, quarter) it takes the latest original-or-RESTATEMENT filing that has rows, plus NEW HOLDINGS amendments filed after it, and drops put/call rows and PRN rows (`sh_type`; bond principal in dollars, not shares). A RESTATEMENT replaces the original; a NEW HOLDINGS amendment only adds the positions the filer had kept confidential (Berkshire Q1-2025: 110 + 4), minus rows that copy the base or an earlier amendment. A "NEW HOLDINGS" that repeats at least half of the base's securities (and at least 5) is a mislabelled full re-list and counts as a RESTATEMENT (in the 35 amendments on file, true NEW HOLDINGS repeat 0–1 securities, re-lists 99–100%). Never dedupe "latest filing wins" in a reader — that drops the original when a NEW HOLDINGS amendment exists.
+
+### 6.1a Fund flows (/funds)
+- `ingest/compute_fund_flows.py` (nightly, after `cusip_resolver`) writes `fund_position_changes`; rules in `ingest/scoring_rules.py` (`fund_position_changes`, `stock_signal_extras`), tests in `tests/test_fund_flows.py`.
+- Each fund's newest filing is compared with its own previous filing (lag 1; lag 2 = two filings back). Early filers count the day they file; a fund whose newest filing is older than the previous reporting quarter (latest quarter whose 45-day deadline has passed) is left out; a fund with a single filing records nothing.
+- Added / trimmed = split-adjusted share change ≥ 10%. Tickers resolve through today's `cusip_ticker_map` for both quarters, then the stored ticker, then an issuer-name match.
+- **All counting lives in `fund_flows()`** (migration 025): net funds, tier-weighted net (S 1.5 · A 1.2 · B 1.0 · C 0.7), conviction (share of each buying fund's 13F book), streak, and the tier/style/lag filters. Don't re-count in TypeScript or Python; extend the function and `tests/sql/fund_flows.test.mjs`.
+- Split history older than 13 months comes from a one-time `python -m ingest.backfill_splits`; the nightly prices job adds new splits.
 
 ### 6.2 13D / 13G
 - New 13D from a filer in the `activist` category → highest-weight signal in the system.
@@ -246,7 +257,7 @@ The following are explicitly out of scope until v1 has been running for at least
 - Multi-user / shared-watchlist features.
 - Mobile app.
 - Backtesting framework.
-- Sector or thematic aggregation views.
+- Thematic aggregation views (hand-curated themes). Industry grouping from an external factual label (Yahoo industry on /funds) was approved by the user on 2026-10-03.
 
 If the user asks for one of these, push back: "v1 isn't a quarter old yet; we don't know what's actually missing." Then build it only if they confirm.
 
@@ -270,7 +281,7 @@ These strings live in the UI, not just this doc.
 - Never add a new composite metric without flagging §2.4.
 - Never add a "discovery" or "trending" surface without flagging §2.2.
 - If the user asks for a feature in §8, push back before implementing.
-- Tests: parsers must have fixture-based tests. Scorers must have unit tests. UI does not need tests for v1. Run `python -m pytest -q` and `cd tests/sql && npm ci && node --test`. Scoring changes: replay old vs new with `scripts/diff_signals.py` and account for every changed ticker.
+- Tests: parsers must have fixture-based tests. Scorers must have unit tests. UI does not need tests for v1. Run `python -m pytest -q`, `cd tests/sql && npm ci && node --test`, and `node --test --experimental-strip-types tests/web/*.test.mjs` (pure TS rules in `web/lib/fund-flow-rules.ts`; keep that file free of imports). Scoring changes: replay old vs new with `scripts/diff_signals.py` and account for every changed ticker.
 - Commits: small, focused, conventional-commits style. One logical change per commit.
 - Building UI: follow [web/AGENTS.md](web/AGENTS.md) — shadcn/ui components, semantic color tokens, never raw Tailwind palette colors.
 - Recent changes and known open issues: [CHANGELOG.md](CHANGELOG.md). Add an entry when you change behavior others rely on.

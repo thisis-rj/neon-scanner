@@ -2,6 +2,17 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-10-03 — /funds: which stocks the tracked funds are buying or leaving, by industry
+
+Author: Vijay (with Claude). Branch `feat/fund-flows`, stacked on `fix/data-correctness`. Spec and eng review: `~/Launcher/docs/neon-fund-flow-list-spec.md`.
+
+- New page **/funds** (in the nav). First view: one row per industry (stocks net-bought, net-sold, total net funds). Click an industry for its stocks: label, net funds (buying − selling), tier-weighted net, conviction (share of each buying fund's 13F book), streak, insider buyers, activist 13Ds, market cap, 6-month return, and which funds moved. Filters for tier, fund style, previous vs two-filings-back, label, min net, market cap, dollar volume, 6-month return, watchlist. Every column header sorts; 6-month return sorts least-run-up first only (§2.2).
+- Data: migration **`025`** adds `tickers.industry` / `sector`, `stock_splits`, `fund_position_changes`, `stock_signal_extras` and the `fund_flows()` function (all counting happens there). Nightly `python -m ingest.compute_fund_flows` after `cusip_resolver`; `prices.py` now saves Yahoo industry/sector and splits from calls it already makes (and skips them until migration 025 exists, because it runs in parallel with `ingest.migrate`).
+- Rules: added/trimmed = split-adjusted share change ≥ 10%; each fund vs its own previous filing; funds that stopped filing and funds with a single filing are left out. Label: Strong = net ≥ 3 + an S/A-tier buyer + 2 quarters of net buying in a row (tuned on live data: 22 stocks); Moderate = net ≥ 3 otherwise; Weak = net 1–2; Net selling = net ≤ −2 (rule printed on the page).
+- Known difference: the Holdings page's Bought/Sold tabs keep their own comparison (matched by company name, not split-adjusted), so they can disagree with /funds for the same fund (decided: leave as is).
+- Release steps: (1) `python -m ingest.migrate` before merging (a GitHub merge skips deploy.sh's migrate); (2) `python -m ingest.backfill_splits` once (~15 min); (3) `python -m ingest.compute_fund_flows` once, or wait for the nightly run. Until (3), /funds says "not computed yet".
+- Signals and Clusters stay live until /funds has been checked on real data.
+
 ## 2026-10-03 — Light/dark toggle, Lag7 tab (Mag7 laggard sleeve)
 
 Authors: Vijay (with Claude).
