@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { BriefcaseIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { cn } from "cn";
-import { savePositionNote, addTransaction, deleteTransaction } from "@/app/my-stocks/actions";
+import { savePositionNote, addTransaction, deleteTransaction, getStockAnalysis } from "@/app/my-stocks/actions";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -13,9 +13,202 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Pct } from "@/components/app/cells";
-import { fmtInr, fmtQty, fmtUsdExact } from "@/lib/format";
+import { Pct, TierBadge } from "@/components/app/cells";
+import { fmtInr, fmtQty, fmtShares, fmtUsd, fmtUsdExact, shortDate } from "@/lib/format";
+
+type Analysis = Awaited<ReturnType<typeof getStockAnalysis>>;
+
+const CHANGE_META: Record<string, { label: string; variant: "positive" | "negative" | "warning" | "info" | "muted" }> = {
+  new: { label: "New", variant: "info" },
+  add: { label: "Added", variant: "positive" },
+  trim: { label: "Trimmed", variant: "warning" },
+  hold: { label: "Hold", variant: "muted" },
+};
+
+function StockAnalysisPanel({ ticker }: { ticker: string }) {
+  const [data, setData] = useState<Analysis | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setFailed(false);
+    getStockAnalysis(ticker)
+      .then((a) => active && setData(a))
+      .catch(() => active && setFailed(true))
+      .finally(() => active && setLoading(false));
+    return () => {
+      active = false;
+    };
+  }, [ticker]);
+
+  if (loading) {
+    return (
+      <div className="mt-4 space-y-2 border-t pt-4">
+        <Skeleton className="h-4 w-64" />
+        <Skeleton className="h-16 w-full" />
+      </div>
+    );
+  }
+  if (failed || !data) {
+    return <p className="mt-4 border-t pt-4 text-xs text-muted-foreground">Couldn&rsquo;t load analysis for {ticker}.</p>;
+  }
+
+  const empty =
+    data.holders.length === 0 && data.exited.length === 0 && data.insiderBuys.length === 0 &&
+    data.insiderSells.length === 0 && data.stakes.length === 0;
+
+  return (
+    <div className="mt-4 border-t pt-4">
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <span className="text-[11px] font-medium tracking-wide text-foreground uppercase">Smart-money &amp; insider read</span>
+        {data.holders.length > 0 && (
+          <span>
+            <span className="font-medium text-foreground tabular-nums">{data.nFunds}</span> tracked funds hold it ·{" "}
+            <span className="tabular-nums">{fmtUsd(data.totalValue)}</span> combined
+          </span>
+        )}
+        {data.latestPeriod && <Badge variant="warning" className="font-normal">13F as of {data.latestPeriod} · 45-day delayed</Badge>}
+      </div>
+
+      {empty ? (
+        <p className="text-xs text-muted-foreground">No tracked-fund 13F or insider records for {ticker}.</p>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {/* Fund holders */}
+          {data.holders.length > 0 && (
+            <div className="overflow-hidden rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Fund</TableHead>
+                    <TableHead className="text-right">Position</TableHead>
+                    <TableHead className="text-right">Est. entry</TableHead>
+                    <TableHead className="text-right">Last qtr</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.holders.map((f) => {
+                    const cm = CHANGE_META[f.change] ?? CHANGE_META.hold;
+                    return (
+                      <TableRow key={f.cik} className="hover:bg-transparent">
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            {f.tier && <TierBadge tier={f.tier} />}
+                            <span className="font-medium text-foreground">{f.name}</span>
+                          </div>
+                          <div className="text-[11px] text-muted-foreground capitalize">{f.category.replace(/_/g, " ")}</div>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {fmtUsd(f.value)}
+                          <div className="text-[11px] text-muted-foreground">{fmtShares(f.shares)} sh</div>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {f.estCost != null ? `~${fmtUsdExact(f.estCost, true)}` : "—"}
+                          {f.firstSeen && <div className="text-[11px] text-muted-foreground/70">since {f.firstSeen.slice(0, 7)}</div>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={cm.variant} className="font-normal">{cm.label}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {/* Funds that dropped it */}
+          {data.exited.length > 0 && (
+            <p className="text-xs">
+              <span className="font-medium text-negative">Exited last quarter:</span>{" "}
+              <span className="text-muted-foreground">
+                {data.exited.map((e) => e.name).join(", ")}
+              </span>
+            </p>
+          )}
+
+          {/* Insider activity */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <div className="mb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                Insider buys (open market)
+              </div>
+              {data.insiderBuys.length === 0 ? (
+                <p className="text-xs text-muted-foreground/70">None recorded.</p>
+              ) : (
+                <ul className="flex flex-col gap-1 text-xs">
+                  {data.insiderBuys.map((t, i) => (
+                    <li key={i} className="flex items-baseline justify-between gap-2">
+                      <span className="truncate">
+                        <span className="text-positive">▲</span> {t.name}
+                        {t.title && <span className="text-muted-foreground"> · {t.title}</span>}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        {shortDate(t.date)} · {fmtShares(t.shares)}{t.price != null ? ` @ ${fmtUsdExact(t.price, true)}` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div>
+              <div className="mb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Insider sells</div>
+              {data.insiderSells.length === 0 ? (
+                <p className="text-xs text-muted-foreground/70">None recorded.</p>
+              ) : (
+                <ul className="flex flex-col gap-1 text-xs">
+                  {data.insiderSells.map((t, i) => (
+                    <li key={i} className="flex items-baseline justify-between gap-2">
+                      <span className="truncate">
+                        <span className="text-negative">▼</span> {t.name}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        {shortDate(t.date)} · {fmtShares(t.shares)}{t.price != null ? ` @ ${fmtUsdExact(t.price, true)}` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          {/* Activist / passive stakes */}
+          {data.stakes.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">13D / 13G stakes</div>
+              <ul className="flex flex-col gap-1 text-xs">
+                {data.stakes.map((s, i) => (
+                  <li key={i} className="flex items-baseline justify-between gap-2">
+                    <span>
+                      <Badge variant={s.subtype.includes("13D") ? "warning" : "muted"} className="mr-1.5 font-normal">
+                        {s.subtype}
+                      </Badge>
+                      {s.filer}
+                    </span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {s.pct != null ? `${s.pct.toFixed(1)}% · ` : ""}
+                      {shortDate(s.date)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      <p className="mt-3 text-[11px] text-muted-foreground/70">
+        13F is a quarterly snapshot filed up to 45 days late — fund entry prices are <em>estimates</em> (shares added
+        that quarter × that quarter&rsquo;s avg price) and an &ldquo;exit&rdquo; means the fund stopped reporting it.
+        Only insider (Form 4) rows are real dated trades.
+      </p>
+    </div>
+  );
+}
 
 export type Holding = {
   person: string;
@@ -268,9 +461,11 @@ function HoldingRow({ h }: { h: Holding }) {
                     </dd>
                   </div>
                 </dl>
-                <p className="mt-3 text-xs text-muted-foreground/70">News &amp; signals — coming soon.</p>
+                <p className="mt-3 text-xs text-muted-foreground/70">Full smart-money &amp; insider read below ↓</p>
               </div>
             </div>
+
+            <StockAnalysisPanel ticker={h.ticker} />
           </TableCell>
         </TableRow>
       )}
