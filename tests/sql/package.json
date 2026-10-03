@@ -1,0 +1,8 @@
+{
+  "name": "neon-scanner-sql-tests",
+  "private": true,
+  "type": "module",
+  "description": "Postgres view/RPC tests run in PGlite (no Supabase needed).",
+  "scripts": { "test": "node --test" },
+  "devDependencies": { "@electric-sql/pglite": "0.3.x" }
+}
