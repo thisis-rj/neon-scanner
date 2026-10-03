@@ -37,7 +37,7 @@ import subprocess
 import sys
 import tempfile
 import types
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -222,12 +222,16 @@ def causes_by_ticker(snap: dict) -> dict[str, set[str]]:
     share row the view dropped because a later filing superseded its filing.
     """
     sys.path.insert(0, str(REPO))
-    from ingest.scoring_rules import nm
+    from ingest.scoring_rules import INSIDER_WINDOW_DAYS, nm
 
     t = snap["tables"]
     name_to_ticker = {nm(u.get("name", "")): u["ticker"] for u in t["tickers"]}
     form = {f["id"]: f["form_type"] for f in t["filings_raw"]}
-    effective_filings = {r["filing_id"] for r in t.get("holdings_13f_effective", [])}
+    if "holdings_13f_effective" not in t:
+        # Without the view every 13F row would look like an amendment and the
+        # UNATTRIBUTED gate could never fire. Snapshot after migration 023.
+        sys.exit("snapshot has no holdings_13f_effective; take it after `python -m ingest.migrate`")
+    effective_filings = {r["filing_id"] for r in t["holdings_13f_effective"]}
     causes: dict[str, set[str]] = {}
     for r in t["holdings_13f"]:
         tk = r.get("ticker") or name_to_ticker.get(nm(r.get("issuer_name", "")))
@@ -240,9 +244,8 @@ def causes_by_ticker(snap: dict) -> dict[str, set[str]]:
             c.add("bonds")
         elif form.get(r["filing_id"]) == "13F-HR/A" or r["filing_id"] not in effective_filings:
             c.add("amendment")
-    from datetime import timedelta
     as_of = date.fromisoformat(snap["as_of"])
-    start, end = (as_of - timedelta(days=30)).isoformat(), as_of.isoformat()
+    start, end = (as_of - timedelta(days=INSIDER_WINDOW_DAYS)).isoformat(), as_of.isoformat()
     for r in t.get("insider_transactions", []):
         if r.get("issuer_ticker") and start <= (r.get("transaction_date") or "") <= end:
             causes.setdefault(r["issuer_ticker"], set()).add("insiders")

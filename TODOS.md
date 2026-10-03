@@ -10,6 +10,6 @@
 **Depends on / blocked by:** the 2026-10-03 data-correctness release.
 
 ### Make CLAUDE.md and the scorer agree
-**What:** Decide the FOMO late-stage filter (CLAUDE.md §2.2 vs compute_buy_signals.py:13), whether signal_weights.yml drives weights (§6.4), and whether the +5.0 multi-source bonus (compute_buy_signals.py) stays (§2.4). Update doc or code.
+**What:** Decide the FOMO late-stage filter (CLAUDE.md §2.2 vs the "No FOMO filter" line in the compute_buy_signals.py module docstring), whether signal_weights.yml drives weights (§6.4), and whether the +5.0 multi-source bonus (`s_pat` in ingest/scoring_rules.py compute_signals) stays (§2.4). Update doc or code.
 **Why:** CLAUDE.md steers every AI session in this repo. **Pros:** Removes wrong assumptions. **Cons:** Product decision; may move scores.
 **Depends on / blocked by:** owner decision; ideally after the backtest TODO.

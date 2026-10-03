@@ -15,7 +15,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-// Stock-level view: pivot of holdings_13f by issuer (CUSIP).
+// Stock-level view: pivot of holdings_13f_effective by issuer (CUSIP).
 // Tells you, for each stock, which tracked funds own it and how much.
 // This is the "confluence" lens — stocks held by many smart funds rise to top.
 

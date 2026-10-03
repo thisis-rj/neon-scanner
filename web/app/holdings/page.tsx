@@ -41,7 +41,7 @@ type Holding = {
   issuer_name: string | null;
   shares: number | null;
   value_usd: number | null;
-  put_call: string | null;  // 'Put' / 'Call' / null. Options are SHORT/HEDGE bets — we filter these out of long-holdings display.
+  put_call: string | null;  // Always null: holdings_recent() reads holdings_13f_effective, which drops option rows (migration 023).
 };
 
 // Cost-basis estimate per (filer, ticker) — keyed `${cik}|${ticker}`.
