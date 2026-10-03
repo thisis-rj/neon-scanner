@@ -224,3 +224,15 @@ test("NEW HOLDINGS filed the same day as the original still adds its new positio
   await rows(pg, "nh", [{ t: "AAA", sh: 100 }, { t: "BBB", sh: 50 }]);
   assert.deepEqual(await effective(pg), ["AAA@o:100", "BBB@nh:50"]);
 });
+
+// Value: protects=a second NEW HOLDINGS amendment that re-lists the first one's rows adds only its new positions; fails_when=the copy check compares only against the base filing; why_new=existing NEW HOLDINGS cases have a single amendment per quarter; seam=none
+test("second NEW HOLDINGS that re-lists the first one's rows doesn't double-count", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2026-08-05" });
+  await rows(pg, "o", [{ t: "AAA", sh: 100 }]);
+  await filing(pg, { id: "n1", filed: "2026-08-20", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "n1", [{ t: "SECRET", sh: 10 }]);
+  await filing(pg, { id: "n2", filed: "2026-09-01", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "n2", [{ t: "AAA", sh: 100 }, { t: "SECRET", sh: 10 }, { t: "NEW2", sh: 5 }]);
+  assert.deepEqual(await effective(pg), ["AAA@o:100", "NEW2@n2:5", "SECRET@n1:10"]);
+});

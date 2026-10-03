@@ -5,13 +5,15 @@ Read-only. Run after `python -m ingest.migrate` (023) and
 
   python scripts/check_holdings_view.py                      # against Supabase
   python scripts/check_holdings_view.py --snapshot s.json.gz # against a diff_signals snapshot
-  python scripts/check_holdings_view.py --timing             # time holdings_recent(2) only
+  python scripts/check_holdings_view.py --timing             # time the Holdings page's holdings_recent(2) loop
 
 Rule (schema/migrations/023_holdings_effective.sql), per (cik, period):
   base  = latest-filed 13F-HR or 13F-HR/A RESTATEMENT (NULL type counts as
-          RESTATEMENT) that has at least one holdings row
-  extra = 13F-HR/A NEW HOLDINGS filed after the base, or with no base,
-          minus rows that copy a base row (same CUSIP, shares, put/call)
+          RESTATEMENT) that has at least one holdings row; on the same day a
+          RESTATEMENT beats an original, then the later accession number wins
+  extra = 13F-HR/A NEW HOLDINGS filed on or after the base date, or with no
+          base, minus rows that copy a row of the base or of an earlier NEW
+          HOLDINGS amendment (same CUSIP, shares, put/call)
   rows  = base ∪ extra, minus put/call rows and PRN rows
 
 Exit 1 on any mismatch. Also reports amendments still missing a type and
@@ -82,7 +84,8 @@ def expected_filings(filings, raw_rows):
             return "NEW HOLDINGS" if f.get("amendment_type") == "NEW HOLDINGS" else "RESTATEMENT"
         bases = sorted((f for f in fs if kind(f) != "NEW HOLDINGS"), key=lambda f: (f["filed_at"][:10], kind(f) == "RESTATEMENT", f.get("accession_number") or "", f["id"]))
         base = bases[-1] if bases else None
-        extras = [f["id"] for f in fs if kind(f) == "NEW HOLDINGS" and (base is None or f["filed_at"][:10] >= base["filed_at"][:10])]
+        extras = [f["id"] for f in sorted(fs, key=lambda f: (f["filed_at"][:10], f.get("accession_number") or ""))
+                  if kind(f) == "NEW HOLDINGS" and (base is None or f["filed_at"][:10] >= base["filed_at"][:10])]
         out[q] = (base["id"] if base else None, extras)
     return out
 
@@ -111,12 +114,13 @@ def check(filings, raw, eff) -> int:
     copied_total = 0
     for (cik, period), (base_id, extras) in sorted(expect.items()):
         ids = ({base_id} if base_id else set()) | set(extras)
-        base_keys = {key(r) for r in rows_by_filing.get(base_id, [])}
+        seen_keys = {key(r) for r in rows_by_filing.get(base_id, [])}
         want = sum(1 for r in rows_by_filing.get(base_id, []) if is_long(r))
-        for x in extras:
-            fresh = [r for r in rows_by_filing[x] if is_long(r) and key(r) not in base_keys]
+        for x in extras:  # filing order: each amendment is checked against the base and earlier ones
+            fresh = [r for r in rows_by_filing[x] if is_long(r) and key(r) not in seen_keys]
             copied_total += sum(1 for r in rows_by_filing[x] if is_long(r)) - len(fresh)
             want += len(fresh)
+            seen_keys |= {key(r) for r in rows_by_filing[x]}
         have = sum(got_rows[i] for i in ids)
         stray = {i for i in got_rows if by_id.get(i, {}).get("cik") == cik
                  and by_id.get(i, {}).get("period_of_report") == period} - ids
@@ -125,15 +129,15 @@ def check(filings, raw, eff) -> int:
             print(f"FAIL {cik} {period}: expected {want} rows from {sorted(ids)}, view has {have}"
                   + (f", plus rows from superseded filings {sorted(stray)}" if stray else ""))
 
-    print(f"NEW HOLDINGS rows that only copied the original (not counted): {copied_total}")
+    print(f"NEW HOLDINGS rows that only copied an earlier filing (not counted): {copied_total}")
     untyped = [f for f in filings if f["form_type"] == "13F-HR/A" and not f.get("amendment_type")]
     amend = [f for f in filings if f["form_type"] == "13F-HR/A"]
     print(f"13F-HR/A filings: {len(amend)} ({Counter(f.get('amendment_type') for f in amend)})")
     if untyped:
-        print(f"WARN {len(untyped)} amendments have no amendment_type (treated as RESTATEMENT) — rerun parse_13f --reparse")
+        print(f"WARN {len(untyped)} amendments have no amendment_type (the view treats them as RESTATEMENT)"
+              " — rerun parse_13f --reparse")
 
-    raw_total = sum(1 for _ in raw)
-    print(f"rows: raw={raw_total:,} effective={len(eff):,} "
+    print(f"rows: raw={len(raw):,} effective={len(eff):,} "
           f"options={sum(1 for r in raw if r.get('put_call')):,} "
           f"prn={sum(1 for r in raw if r.get('sh_type') == 'PRN'):,} "
           f"sh_type_null={sum(1 for r in raw if not r.get('sh_type')):,}")
@@ -150,10 +154,16 @@ def check(filings, raw, eff) -> int:
 
 
 def timing() -> int:
+    """Time holdings_recent(2) the way the Holdings page reads it: 1,000-row pages until short."""
     sb = _supabase()
-    t0 = time.monotonic()
-    n = len(sb.rpc("holdings_recent", {"max_periods": 2}).execute().data or [])
-    print(f"holdings_recent(2): {n:,} rows in {time.monotonic() - t0:.2f}s (wall clock, includes network)")
+    t0, n, pages = time.monotonic(), 0, 0
+    while True:
+        b = sb.rpc("holdings_recent", {"max_periods": 2}).range(n, n + 999).execute().data or []
+        n, pages = n + len(b), pages + 1
+        if len(b) < 1000:
+            break
+    print(f"holdings_recent(2): {n:,} rows in {pages} pages, {time.monotonic() - t0:.2f}s "
+          "(wall clock, includes network)")
     return 0
 
 

@@ -18,8 +18,8 @@
 --           never wipes out the quarter). amendment_type NULL on a 13F-HR/A
 --           (cover page unreadable) counts as RESTATEMENT.
 --   extra = 13F-HR/A NEW HOLDINGS filed on or after the base date (or with no base),
---           minus any row that is an exact copy of a base row (same CUSIP,
---           shares, put/call). Filers sometimes label a full re-list
+--           minus any row that is an exact copy of a row in the base or in an
+--           earlier NEW HOLDINGS amendment (same CUSIP, shares, put/call). Filers sometimes label a full re-list
 --           "NEW HOLDINGS": First Eagle Q2-2026 re-listed all 614 original
 --           rows plus 2 new ones; Akre Q1-2024 and ValueAct Q3-2024 did the
 --           same. Trusting the label would count those positions twice.
@@ -48,7 +48,7 @@ with thirteenf as (
     and exists (select 1 from holdings_13f h where h.filing_id = f.id)
 ),
 base as (
-  select distinct on (cik, period_of_report) id, cik, period_of_report, filed_at
+  select distinct on (cik, period_of_report) id, cik, period_of_report, filed_at, accession_number
   from thirteenf
   where kind in ('ORIGINAL', 'RESTATEMENT')
   -- filed_at is a date, so an original and its restatement can tie: the
@@ -57,9 +57,9 @@ base as (
            accession_number desc, id desc
 ),
 effective_filings as (
-  select id, null as base_id from base
+  select id, cik, period_of_report, filed_at, accession_number, true as is_base from base
   union all
-  select n.id, b.id as base_id
+  select n.id, n.cik, n.period_of_report, n.filed_at, n.accession_number, false as is_base
   from thirteenf n
   left join base b on b.cik = n.cik and b.period_of_report = n.period_of_report
   where n.kind = 'NEW HOLDINGS'
@@ -72,15 +72,18 @@ from holdings_13f h
 join effective_filings e on e.id = h.filing_id
 where h.put_call is null
   and coalesce(h.sh_type, 'SH') <> 'PRN'
-  -- NEW HOLDINGS rows that merely repeat a base row are not new holdings.
-  and not exists (
-    select 1 from holdings_13f o
-    where e.base_id is not null
-      and o.filing_id = e.base_id
+  -- NEW HOLDINGS rows that merely repeat a row of the base, or of a NEW
+  -- HOLDINGS amendment filed before it, are not new holdings.
+  and (e.is_base or not exists (
+    select 1
+    from effective_filings p
+    join holdings_13f o on o.filing_id = p.id
+    where p.cik = e.cik and p.period_of_report = e.period_of_report
+      and (p.is_base or (p.filed_at, p.accession_number) < (e.filed_at, e.accession_number))
       and o.cusip is not distinct from h.cusip
       and o.shares is not distinct from h.shares
       and o.put_call is not distinct from h.put_call
-  );
+  ));
 
 comment on view holdings_13f_effective is
   'Long equity 13F holdings per filer-quarter: latest original/restatement ∪ later NEW HOLDINGS amendments (rows not already in the base); excludes put/call and PRN rows. See migration 023.';
@@ -106,7 +109,7 @@ as $$
   with ranked as (
     select
       h.cik, h.period_of_report, h.cusip, h.ticker, h.issuer_name,
-      h.shares, h.value_usd, h.put_call, h.filing_id,
+      h.shares, h.value_usd, h.put_call, h.filing_id, h.id,
       dense_rank() over (partition by h.cik order by h.period_of_report desc) as rnk
     from holdings_13f_effective h
   )
@@ -116,5 +119,8 @@ as $$
     f.filer_name, f.filed_at
   from ranked r
   join filings_raw f on f.id = r.filing_id
-  where r.rnk <= max_periods;
+  where r.rnk <= max_periods
+  -- The page reads this in 1,000-row .range() pages; without a total order
+  -- rows can move between pages and be skipped or counted twice.
+  order by r.cik, r.period_of_report desc, r.id;
 $$;
