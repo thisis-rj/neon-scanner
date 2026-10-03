@@ -209,8 +209,11 @@ def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
         return 0, "info table empty or unparseable"
 
     sb = _supabase()
-    if filing.get("form_type") == "13F-HR/A":
-        record_amendment_type(sb, filing, base, xmls or [])
+    # An amendment whose type we can't read stays unparsed (retried next run):
+    # the view would treat it as a RESTATEMENT, and a 4-row NEW HOLDINGS
+    # amendment would then replace a 110-row quarter.
+    if filing.get("form_type") == "13F-HR/A" and not record_amendment_type(sb, filing, base, xmls or []):
+        return 0, "amendment type unreadable; left unparsed, will retry"
 
     # Idempotent: delete existing rows for this filing, then insert fresh.
     sb.table("holdings_13f").delete().eq("filing_id", filing["id"]).execute()
@@ -231,14 +234,20 @@ def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
         })
 
     # Batch insert. Supabase accepts large batches but ~500/request is safer.
-    for i in range(0, len(rows_to_insert), 500):
-        sb.table("holdings_13f").insert(rows_to_insert[i:i + 500]).execute()
+    # A failed batch would leave the filing truncated, and a filing with rows is
+    # never retried; remove its rows so the next run parses it again.
+    try:
+        for i in range(0, len(rows_to_insert), 500):
+            sb.table("holdings_13f").insert(rows_to_insert[i:i + 500]).execute()
+    except Exception:
+        sb.table("holdings_13f").delete().eq("filing_id", filing["id"]).execute()
+        raise
 
     return len(rows_to_insert), None
 
 
-def record_amendment_type(sb: Client, filing: dict[str, Any], base: str, xmls: list[str]) -> None:
-    """Store RESTATEMENT / NEW HOLDINGS on filings_raw. Failures only warn: holdings still parse."""
+def record_amendment_type(sb: Client, filing: dict[str, Any], base: str, xmls: list[str]) -> bool:
+    """Store RESTATEMENT / NEW HOLDINGS on filings_raw. Returns False (and writes nothing) if unreadable."""
     primary = pick_primary_doc(xmls)
     amendment_type = None
     if primary:
@@ -249,10 +258,10 @@ def record_amendment_type(sb: Client, filing: dict[str, Any], base: str, xmls: l
         except requests.RequestException as e:
             print(f"  WARN {filing['accession_number']}: cover page fetch failed ({e})", file=sys.stderr)
     if amendment_type is None:
-        print(f"  WARN {filing['accession_number']}: amendment type unknown; treated as RESTATEMENT",
-              file=sys.stderr)
-        return
+        print(f"  WARN {filing['accession_number']}: amendment type unreadable", file=sys.stderr)
+        return False
     sb.table("filings_raw").update({"amendment_type": amendment_type}).eq("id", filing["id"]).execute()
+    return True
 
 
 def get_unparsed_filings(sb: Client, reparse: bool = False) -> list[dict[str, Any]]:
@@ -267,6 +276,7 @@ def get_unparsed_filings(sb: Client, reparse: bool = False) -> list[dict[str, An
             .select("id,accession_number,cik,filer_name,period_of_report,form_type")
             .in_("form_type", ["13F-HR", "13F-HR/A"])
             .order("period_of_report", desc=True)
+            .order("id")  # ~85 filings tie per quarter; without this, offset pages skip/repeat
             .range(offset, offset + 999)
             .execute()
         )

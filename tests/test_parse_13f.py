@@ -118,14 +118,50 @@ def test_parse_one_filing_records_amendment_type_only_when_read(monkeypatch, for
     filing = {"id": "f-1", "cik": "949509", "accession_number": "0000949509-26-000004",
               "period_of_report": "2026-03-31", "form_type": form}
 
-    assert p13f.parse_one_filing(filing) == (6, None)  # holdings parse whatever the cover page did
+    unreadable_amendment = form == "13F-HR/A" and stored is None
+    if unreadable_amendment:
+        # Left unparsed and untouched (retried next run): an untyped amendment would count as a
+        # RESTATEMENT and could replace the whole quarter.
+        assert p13f.parse_one_filing(filing) == (0, "amendment type unreadable; left unparsed, will retry")
+        assert sb.ops == []
+        return
+    assert p13f.parse_one_filing(filing) == (6, None)
 
     updates = [o for o in sb.ops if o["table"] == "filings_raw"]
     if stored is None:
-        assert updates == []  # an unread cover page never overwrites a stored type with NULL
+        assert updates == []  # an original's cover page is never read or written
     else:
         assert updates == [{"table": "filings_raw", "op": "update", "values": {"amendment_type": stored},
                             "eq": ("id", "f-1")}]
     inserted = [r for o in sb.ops if o.get("op") == "insert" for r in o["rows"]]
     assert sorted(r["sh_type"] for r in inserted) == ["PRN", "PRN", "SH", "SH", "SH", "SH"]
     assert [o["op"] for o in sb.ops if o["table"] == "holdings_13f"] == ["delete", "insert"]
+
+
+# Value: protects=a batch insert failure leaves the filing with no rows, so the next run re-parses it; fails_when=the cleanup delete is removed and a truncated filing becomes the quarter's base; why_new=no test covered insert failures; seam=none
+def test_parse_one_filing_failed_insert_leaves_no_partial_rows(monkeypatch):
+    def fake_get(url, _headers):
+        if url.endswith("/index.json"):
+            return _Resp(200, payload={"directory": {"item": [{"name": "infotable.xml"}]}})
+        return _Resp(200, (FIX / "infotable_mixed.xml").read_bytes())
+
+    sb = _FakeSupabase()
+    real_table = sb.table
+
+    def flaky_table(name):
+        q = real_table(name)
+        insert = q.insert
+        def failing_insert(rows):
+            raise requests.ConnectionError("reset mid-batch")
+        q.insert = failing_insert if name == "holdings_13f" else insert
+        return q
+
+    sb.table = flaky_table
+    monkeypatch.setattr(p13f, "_polite_get", fake_get)
+    monkeypatch.setattr(p13f, "_supabase", lambda: sb)
+    filing = {"id": "f-2", "cik": "1", "accession_number": "0000000001-26-000001",
+              "period_of_report": "2026-03-31", "form_type": "13F-HR"}
+
+    with pytest.raises(requests.ConnectionError):
+        p13f.parse_one_filing(filing)
+    assert [o["op"] for o in sb.ops if o["table"] == "holdings_13f"] == ["delete", "delete"]
