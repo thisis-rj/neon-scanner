@@ -27,6 +27,26 @@ const CHANGE_META: Record<string, { label: string; variant: "positive" | "negati
   hold: { label: "Hold", variant: "muted" },
 };
 
+// SEC EDGAR page for a reporting person — every Form 4 there states their exact
+// relationship/title to the issuer (officer title, director, 10% owner).
+function secInsiderUrl(cik: string): string {
+  return `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${cik}&type=4&owner=include&count=40`;
+}
+function InsiderName({ name, cik }: { name: string; cik: string | null }) {
+  if (!cik) return <span>{name}</span>;
+  return (
+    <a
+      href={secInsiderUrl(cik)}
+      target="_blank"
+      rel="noreferrer"
+      title="Who is this? → their SEC Form 4 filings (states their title/role)"
+      className="underline decoration-dotted decoration-muted-foreground/50 underline-offset-2 hover:text-foreground hover:decoration-foreground"
+    >
+      {name}
+    </a>
+  );
+}
+
 function StockAnalysisPanel({ ticker }: { ticker: string }) {
   const [data, setData] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(true);
@@ -144,7 +164,7 @@ function StockAnalysisPanel({ ticker }: { ticker: string }) {
                   {data.insiderBuys.map((t, i) => (
                     <li key={i} className="flex items-baseline justify-between gap-2">
                       <span className="truncate">
-                        <span className="text-positive">▲</span> {t.name}
+                        <span className="text-positive">▲</span> <InsiderName name={t.name} cik={t.cik} />
                         {t.title && <span className="text-muted-foreground"> · {t.title}</span>}
                       </span>
                       <span className="shrink-0 tabular-nums text-muted-foreground">
@@ -164,7 +184,7 @@ function StockAnalysisPanel({ ticker }: { ticker: string }) {
                   {data.insiderSells.map((t, i) => (
                     <li key={i} className="flex items-baseline justify-between gap-2">
                       <span className="truncate">
-                        <span className="text-negative">▼</span> {t.name}
+                        <span className="text-negative">▼</span> <InsiderName name={t.name} cik={t.cik} />
                       </span>
                       <span className="shrink-0 tabular-nums text-muted-foreground">
                         {shortDate(t.date)} · {fmtShares(t.shares)}{t.price != null ? ` @ ${fmtUsdExact(t.price, true)}` : ""}
@@ -586,7 +606,9 @@ function PersonView({
   cash?: PocketCash;
   usdInr: number | null;
 }) {
-  const myHoldings = [...holdings].sort((a, b) => b.qty * b.avg_cost - a.qty * a.avg_cost);
+  // Sorted by current market value (qty × current price), largest first.
+  const curVal = (h: Holding) => h.qty * (h.current_price ?? h.avg_cost);
+  const myHoldings = [...holdings].sort((a, b) => curVal(b) - curVal(a));
   const mySells = [...sells].sort((a, b) => b.trade_date.localeCompare(a.trade_date) || b.id - a.id);
 
   let invested = 0;

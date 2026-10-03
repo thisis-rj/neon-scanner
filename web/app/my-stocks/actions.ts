@@ -74,7 +74,7 @@ type Holder = {
   estCost: number | null;
   firstSeen: string | null;
 };
-type Insider = { name: string; title: string | null; date: string; shares: number; price: number | null };
+type Insider = { name: string; title: string | null; cik: string | null; date: string; shares: number; price: number | null };
 type Stake = { filer: string; subtype: string; pct: number | null; date: string };
 
 export async function getStockAnalysis(ticker: string): Promise<{
@@ -184,7 +184,7 @@ export async function getStockAnalysis(ticker: string): Promise<{
   // Insider open-market buys (universe-wide, code P) — real dated fills
   const { data: buys } = await sb
     .from("insider_transactions")
-    .select("reporter_name,officer_title,transaction_date,shares,price")
+    .select("reporter_name,officer_title,reporter_cik,transaction_date,shares,price")
     .eq("issuer_ticker", ticker)
     .eq("transaction_code", "P")
     .order("transaction_date", { ascending: false })
@@ -192,15 +192,17 @@ export async function getStockAnalysis(ticker: string): Promise<{
   const insiderBuys: Insider[] = (buys ?? []).map((b) => ({
     name: String(b.reporter_name),
     title: b.officer_title == null ? null : String(b.officer_title),
+    cik: b.reporter_cik == null ? null : String(b.reporter_cik),
     date: String(b.transaction_date),
     shares: Number(b.shares ?? 0),
     price: b.price == null ? null : Number(b.price),
   }));
 
-  // Insider sells (events_form4, code S)
+  // Insider sells (events_form4, code S). No title column here — the name links
+  // to the filer's SEC page (every Form 4 states their relationship/title).
   const { data: sells } = await sb
     .from("events_form4")
-    .select("reporter_name,transaction_date,shares,price")
+    .select("reporter_name,reporter_cik,transaction_date,shares,price")
     .eq("ticker", ticker)
     .eq("transaction_code", "S")
     .order("transaction_date", { ascending: false })
@@ -208,6 +210,7 @@ export async function getStockAnalysis(ticker: string): Promise<{
   const insiderSells: Insider[] = (sells ?? []).map((s) => ({
     name: String(s.reporter_name),
     title: null,
+    cik: s.reporter_cik == null ? null : String(s.reporter_cik),
     date: String(s.transaction_date),
     shares: Number(s.shares ?? 0),
     price: s.price == null ? null : Number(s.price),
