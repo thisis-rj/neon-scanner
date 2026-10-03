@@ -149,6 +149,8 @@ def compute_quarter_vwap(yf_mod, ticker: str, period_iso: str) -> tuple[float, i
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--cik", type=str, default=None, help="Single CIK to process")
+    p.add_argument("--tickers", type=str, default=None,
+                   help="Comma-separated tickers to limit to, e.g. NVDA,TSM,GOOG (skips the rest)")
     p.add_argument("--refresh-vwap", action="store_true", help="Re-fetch cached VWAPs")
     args = p.parse_args()
 
@@ -178,6 +180,18 @@ def main() -> None:
             name_to_ticker[norm] = r["ticker"]
     print(f"  {len(name_to_ticker):,} unique normalized names mapped", flush=True)
 
+    # ─── Authoritative cusip → ticker (OpenFIGI-resolved) ──────────────
+    # Preferred over the issuer-name match below. SEC issuer names are
+    # truncated/inconsistent ("TAIWAN SEMICONDUCTOR MANUFAC", "...MANUFACTU",
+    # "ADR TAIWAN SEMICONDUCTOR...") and multi-class names collide (GOOG and
+    # GOOGL are both "Alphabet Inc."), so name-matching alone silently dropped
+    # those positions from cost basis entirely. CUSIP is exact.
+    cusip_to_ticker: dict[str, str] = {}
+    for r in paginated(sb, "cusip_ticker_map", "cusip,ticker"):
+        if r.get("cusip") and r.get("ticker"):
+            cusip_to_ticker[r["cusip"]] = r["ticker"]
+    print(f"  {len(cusip_to_ticker):,} cusip→ticker mappings", flush=True)
+
     # ─── Pull holdings ─────────────────────────────────────────────────
     # Effective long-equity rows (migration 023): restated quarters count once,
     # options and bond principal excluded.
@@ -186,7 +200,7 @@ def main() -> None:
     for c in filer_ciks:
         all_h.extend(paginated(
             sb, "holdings_13f_effective",
-            "cik,ticker,issuer_name,period_of_report,shares,value_usd",
+            "cik,ticker,cusip,issuer_name,period_of_report,shares,value_usd",
             order="id", cik=c,
         ))
     print(f"  {len(all_h):,} rows across {len(filer_ciks)} filers", flush=True)
@@ -197,7 +211,11 @@ def main() -> None:
     for h in all_h:
         if h.get("shares") is None:
             continue
-        ticker = h.get("ticker") or resolve_ticker(h.get("issuer_name"), name_to_ticker)
+        ticker = (
+            cusip_to_ticker.get(h.get("cusip"))
+            or h.get("ticker")
+            or resolve_ticker(h.get("issuer_name"), name_to_ticker)
+        )
         if not ticker:
             unresolved += 1
             continue
@@ -209,6 +227,11 @@ def main() -> None:
     for k in traj:
         traj[k].sort(key=lambda x: x["period"])
     print(f"  {len(traj):,} (filer, ticker) trajectories  (unresolved issuer names: {unresolved:,})", flush=True)
+
+    if args.tickers:
+        want = {t.strip().upper() for t in args.tickers.split(",") if t.strip()}
+        traj = {k: v for k, v in traj.items() if k[1].upper() in want}
+        print(f"  limited to {len(want)} ticker(s) → {len(traj):,} trajectories", flush=True)
 
     # ─── Load VWAP cache ───────────────────────────────────────────────
     vwap_cache: dict[tuple[str, str], float] = {}
