@@ -80,6 +80,12 @@ function resolveTicker(issuer: string | null | undefined, m: Record<string, stri
   return null;
 }
 
+// Key for matching the same issuer across quarters (case/space-normalized
+// name). priorByCusip is keyed by this, not by CUSIP — see FilerSummary.
+function normIssuer(n: string | null): string {
+  return (n ?? "").toUpperCase().replace(/\s+/g, " ").trim();
+}
+
 async function fetchHoldings(): Promise<{
   filers: FilerSummary[];
   total: number;
@@ -158,7 +164,6 @@ async function fetchHoldings(): Promise<{
   // since those are short/hedge bets, not long holdings. Aggregating by
   // issuer collapses cases where one issuer has multiple CUSIPs (e.g.
   // Chesapeake legacy CUSIP + post-merger Expand Energy CUSIP).
-  const normIssuer = (n: string | null) => (n ?? "").toUpperCase().replace(/\s+/g, " ").trim();
   function aggregateByIssuer(positions: Holding[]): Holding[] {
     const m = new Map<string, Holding>();
     for (const p of positions) {
@@ -710,7 +715,7 @@ export default async function HoldingsPage() {
                           ? ((nowPrice - estCost) / estCost) * 100
                           : null;
                         // Δ shares vs prior 13F: NEW, +X% add, -X% trim, blank if within ±5%.
-                        const prev = f.priorByCusip.get(h.cusip);
+                        const prev = f.priorByCusip.get(normIssuer(h.issuer_name));
                         let qDiff: { label: string; cls: string } | null = null;
                         if (f.priorPeriod) {
                           if (!prev) {
