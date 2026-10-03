@@ -35,6 +35,8 @@ import requests
 from dotenv import load_dotenv
 from supabase import Client, create_client
 
+from ingest.form4_fields import direct_indirect, parse_bool_flag, parse_number
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -198,9 +200,11 @@ def parse_form4(xml_bytes: bytes) -> list[dict[str, Any]] | None:
     owner = next((c for c in root if _localname(c.tag) == "reportingOwner"), None)
     reporter_cik = _text_of(owner, "reportingOwnerId", "rptOwnerCik")
     reporter_name = _text_of(owner, "reportingOwnerId", "rptOwnerName")
-    is_officer = _text_of(owner, "reportingOwnerRelationship", "isOfficer") == "1"
-    is_director = _text_of(owner, "reportingOwnerRelationship", "isDirector") == "1"
-    is_ten_pct = _text_of(owner, "reportingOwnerRelationship", "isTenPercentOwner") == "1"
+    # SEC writes these as "1"/"0" or "true"/"false"; unknown counts as False here.
+    is_officer = parse_bool_flag(_text_of(owner, "reportingOwnerRelationship", "isOfficer")) is True
+    is_director = parse_bool_flag(_text_of(owner, "reportingOwnerRelationship", "isDirector")) is True
+    is_ten_pct = parse_bool_flag(_text_of(owner, "reportingOwnerRelationship", "isTenPercentOwner")) is True
+    is_10b5_1 = parse_bool_flag(_text_of(root, "aff10b5One"))  # None on pre-2023 filings
     officer_title = _text_of(owner, "reportingOwnerRelationship", "officerTitle")
 
     if not issuer_cik:
@@ -245,6 +249,11 @@ def parse_form4(xml_bytes: bytes) -> list[dict[str, Any]] | None:
                 "shares": shares_num,
                 "price": price_num,
                 "value_usd": value_usd,
+                "is_10b5_1": is_10b5_1,
+                "shares_owned_after": parse_number(
+                    _text_of(tx, "postTransactionAmounts", "sharesOwnedFollowingTransaction", "value")),
+                "direct_indirect": direct_indirect(
+                    _text_of(tx, "ownershipNature", "directOrIndirectOwnership", "value")),
             })
     return rows
 

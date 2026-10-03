@@ -33,6 +33,8 @@ import requests
 from dotenv import load_dotenv
 from supabase import Client, create_client
 
+from ingest.form4_fields import direct_indirect, parse_bool_flag, parse_number, relationship_flags
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -98,6 +100,8 @@ def parse_quarter(zip_path: Path) -> list[dict[str, Any]]:
                     "issuer_name": row.get("ISSUERNAME"),
                     "issuer_ticker": (row.get("ISSUERTRADINGSYMBOL") or "").strip().upper() or None,
                     "filing_date": row.get("FILING_DATE"),
+                    # Rule 10b5-1 checkbox (required since 2023-04-01): "1"/"true"/"0"/"false"/blank.
+                    "is_10b5_1": parse_bool_flag(row.get("AFF10B5ONE")),
                 }
 
         # 2) REPORTINGOWNER — could be multiple per accession; keep first
@@ -108,13 +112,10 @@ def parse_quarter(zip_path: Path) -> list[dict[str, Any]]:
                 acc = row["ACCESSION_NUMBER"]
                 if acc in owner_by_acc:
                     continue
-                rel = (row.get("RPTOWNER_RELATIONSHIP") or "").upper()
                 owner_by_acc[acc] = {
                     "reporter_cik": row.get("RPTOWNERCIK"),
                     "reporter_name": row.get("RPTOWNERNAME"),
-                    "reporter_is_officer": "OFFICER" in rel,
-                    "reporter_is_director": "DIRECTOR" in rel,
-                    "reporter_is_ten_pct": "10" in rel or "TEN PERCENT" in rel,
+                    **relationship_flags(row.get("RPTOWNER_RELATIONSHIP")),
                     "officer_title": row.get("RPTOWNER_TITLE"),
                 }
 
@@ -158,6 +159,9 @@ def parse_quarter(zip_path: Path) -> list[dict[str, Any]]:
                     "price": price,
                     "value_usd": value_usd,
                     "filed_at": filed_at.isoformat(),
+                    "is_10b5_1": sub["is_10b5_1"],
+                    "shares_owned_after": parse_number(row.get("SHRS_OWND_FOLWNG_TRANS")),
+                    "direct_indirect": direct_indirect(row.get("DIRECT_INDIRECT_OWNERSHIP")),
                     "primary_doc_url": f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc.replace('-', '')}/{acc}-index.htm" if cik_int else None,
                 })
         return rows
