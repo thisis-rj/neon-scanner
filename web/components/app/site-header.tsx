@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BookOpenIcon, MenuIcon } from "lucide-react";
+import { ThemeToggle } from "@/components/app/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -60,44 +61,48 @@ export function SiteHeader() {
           ))}
         </nav>
 
-        <Button
-          asChild
-          size="sm"
-          variant={isActive(pathname, "/learn") ? "secondary" : "ghost"}
-          className="ml-auto hidden text-muted-foreground md:inline-flex"
-        >
-          <Link href="/learn">
-            <BookOpenIcon data-icon="inline-start" />
-            Learn
-          </Link>
-        </Button>
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            asChild
+            size="sm"
+            variant={isActive(pathname, "/learn") ? "secondary" : "ghost"}
+            className="hidden text-muted-foreground md:inline-flex"
+          >
+            <Link href="/learn">
+              <BookOpenIcon data-icon="inline-start" />
+              Learn
+            </Link>
+          </Button>
 
-        <Sheet>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" className="ml-auto md:hidden" aria-label="Open navigation">
-              <MenuIcon />
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="left" className="w-72">
-            <SheetHeader>
-              <SheetTitle>Neon Scanner</SheetTitle>
-              <SheetDescription>Signals from SEC filings. No FOMO, no narrative.</SheetDescription>
-            </SheetHeader>
-            <nav className="flex flex-col gap-1 px-4">
-              {[...NAV, { href: "/learn", label: "Learn" }].map((item) => (
-                <SheetClose key={item.href} asChild>
-                  <Button
-                    asChild
-                    variant={isActive(pathname, item.href) ? "secondary" : "ghost"}
-                    className="justify-start"
-                  >
-                    <Link href={item.href}>{item.label}</Link>
-                  </Button>
-                </SheetClose>
-              ))}
-            </nav>
-          </SheetContent>
-        </Sheet>
+          <ThemeToggle className="text-muted-foreground" />
+
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open navigation">
+                <MenuIcon />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="w-72">
+              <SheetHeader>
+                <SheetTitle>Neon Scanner</SheetTitle>
+                <SheetDescription>Signals from SEC filings. No FOMO, no narrative.</SheetDescription>
+              </SheetHeader>
+              <nav className="flex flex-col gap-1 px-4">
+                {[...NAV, { href: "/learn", label: "Learn" }].map((item) => (
+                  <SheetClose key={item.href} asChild>
+                    <Button
+                      asChild
+                      variant={isActive(pathname, item.href) ? "secondary" : "ghost"}
+                      className="justify-start"
+                    >
+                      <Link href={item.href}>{item.label}</Link>
+                    </Button>
+                  </SheetClose>
+                ))}
+              </nav>
+            </SheetContent>
+          </Sheet>
+          </div>
       </div>
       <div className="neon-rule h-px" />
     </header>

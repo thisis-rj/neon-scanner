@@ -22,7 +22,7 @@ The frontend was rebuilt on **shadcn/ui** on 2026-10-03 (see `/CHANGELOG.md`). E
 
 ## Colors — tokens only
 
-Theme lives in `app/globals.css`; the app is dark-only (`dark` class on `<html>`). **Never use raw Tailwind palette colors** (`text-emerald-300`, `bg-neutral-900`, …). Use semantic tokens — each means exactly one thing everywhere:
+Theme lives in `app/globals.css`: light tokens in `:root`, dark in `.dark`. Dark is the default; the header's sun/moon button (`components/app/theme-toggle.tsx`, via `next-themes`) switches and remembers the choice. Every new color must work in **both** themes — check each page in light mode too. **Never use raw Tailwind palette colors** (`text-emerald-300`, `bg-neutral-900`, …). Use semantic tokens — each means exactly one thing everywhere:
 
 | Token / Badge variant | Means |
 |---|---|
