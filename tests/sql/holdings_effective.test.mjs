@@ -11,6 +11,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION = readFileSync(new URL("../../schema/migrations/023_holdings_effective.sql", import.meta.url), "utf8");
 const MATERIALIZE = readFileSync(new URL("../../schema/migrations/025_holdings_effective_materialized.sql", import.meta.url), "utf8");
+const FAST_RECENT = readFileSync(new URL("../../schema/migrations/026_holdings_recent_fast.sql", import.meta.url), "utf8");
 
 // Minimal copies of the two tables as they exist before 023 (schema/supabase.sql).
 const BASE_SCHEMA = `
@@ -29,7 +30,10 @@ async function db({ materialize = true } = {}) {
   const pg = new PGlite();
   await pg.exec(BASE_SCHEMA);
   await pg.exec(MIGRATION);
-  if (materialize) await pg.exec(MATERIALIZE);
+  if (materialize) {
+    await pg.exec(MATERIALIZE);
+    await pg.exec(FAST_RECENT);
+  }
   return pg;
 }
 
@@ -196,6 +200,31 @@ test("023 is re-runnable on its own, and 025 is re-runnable", async () => {
   await plain.exec(MIGRATION);
   const pg = await db();
   await pg.exec(MATERIALIZE);
+  await pg.exec(FAST_RECENT);
+});
+
+// Value: protects=holdings_recent() returns exactly the rows and order of the straightforward "rank every holding" query; fails_when=the distinct-periods rewrite drops a period, mis-ranks ties, or changes the page order; why_new=the other holdings_recent test has one filer and checks a sorted copy; seam=none
+test("holdings_recent() matches the rank-every-row reference, rows and order", async () => {
+  const pg = await db();
+  const periods = ["2025-06-30", "2025-09-30", "2025-12-31", "2026-03-31"];
+  for (const cik of ["1", "2", "3"]) {
+    for (const [i, period] of periods.entries()) {
+      if (cik === "3" && i === 3) continue;           // filer 3 is a quarter behind
+      const id = `f${cik}-${i}`;
+      await filing(pg, { id, cik, period, filed: `2026-0${i + 1}-15` });
+      await rows(pg, id, [{ t: "AAA", sh: 1 + i }, { t: "BBB", sh: 10 + i }, { t: "OPT", pc: "Call" }]);
+    }
+  }
+  await pg.exec("select refresh_holdings_effective()");
+  for (const n of [1, 2, 3]) {
+    const got = (await pg.query(`select cik, period_of_report::text p, ticker, shares from holdings_recent(${n})`)).rows;
+    const want = (await pg.query(`
+      with r as (select h.*, dense_rank() over (partition by h.cik order by h.period_of_report desc) rnk
+                 from holdings_13f_effective h)
+      select cik, period_of_report::text p, ticker, shares from r where rnk <= ${n}
+      order by cik, period_of_report desc, id`)).rows;
+    assert.deepEqual(got, want, `max_periods=${n}`);
+  }
 });
 
 // Value: protects=readers see the stored copy, which equals the live rule after refresh_holdings_effective() and not before; fails_when=the refresh function breaks (e.g. CONCURRENTLY without the unique index) or readers bypass the stored copy; why_new=all other tests read the live rule; seam=none
