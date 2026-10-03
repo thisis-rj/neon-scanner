@@ -16,7 +16,7 @@ Stores all signals with score ≥ 4 (~990 tickers); /signals page filters at rea
 from __future__ import annotations
 
 import os, re, sys, time, warnings
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -376,7 +376,12 @@ def main() -> None:
     if to_delete:
         print(f"  Removing {len(to_delete)} stale tickers", flush=True)
         sb.table("signals_latest").delete().in_("ticker", to_delete).execute()
-    # Upsert current
+    # Upsert current. computed_at's column default (now()) only fires on
+    # INSERT, so stamp it explicitly — otherwise a ticker that keeps
+    # signaling shows the date it FIRST appeared as "last computed".
+    run_at = datetime.now(timezone.utc).isoformat()
+    for s in scored:
+        s["computed_at"] = run_at
     for i in range(0, len(scored), 100):
         batch = scored[i:i + 100]
         sb.table("signals_latest").upsert(batch, on_conflict="ticker").execute()
