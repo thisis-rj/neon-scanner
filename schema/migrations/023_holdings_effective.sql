@@ -30,7 +30,7 @@
 -- Additive only: two nullable columns, an index and a view. Old code keeps
 -- working; parse_13f fills the columns (one-time `--reparse` backfills them).
 
-alter table filings_raw add column if not exists amendment_type text;   -- 'RESTATEMENT' | 'NEW HOLDINGS' | null
+alter table filings_raw add column if not exists amendment_type text;   -- 'RESTATEMENT' | 'NEW HOLDINGS' | 'UNREADABLE' (no rows; left out) | null
 alter table holdings_13f add column if not exists sh_type text;         -- 'SH' | 'PRN' | null (pre-reparse)
 
 -- The view joins holdings to filings by filing_id; there was no index on it.
@@ -103,17 +103,21 @@ from holdings_13f h
 join effective_filings e on e.id = h.filing_id
 where h.put_call is null
   and coalesce(h.sh_type, 'SH') <> 'PRN'
-  -- NEW HOLDINGS rows that merely repeat a row of the base, or of a NEW
-  -- HOLDINGS amendment filed before it, are not new holdings.
+  -- A NEW HOLDINGS row is dropped if it exactly repeats a row of the base or
+  -- of an earlier NEW HOLDINGS amendment, or if the base was filed on a later
+  -- date (a re-list) and lists the same security: the re-list restates it.
   and (e.is_base or not exists (
     select 1
     from effective_filings p
     join holdings_13f o on o.filing_id = p.id
     where p.cik = e.cik and p.period_of_report = e.period_of_report
-      and (p.is_base or (p.filed_at, p.accession_number) < (e.filed_at, e.accession_number))
       and o.cusip is not distinct from h.cusip
-      and o.shares is not distinct from h.shares
       and o.put_call is not distinct from h.put_call
+      and (
+        (o.shares is not distinct from h.shares
+         and (p.is_base or (p.filed_at, p.accession_number) < (e.filed_at, e.accession_number)))
+        or (p.is_base and p.filed_at > e.filed_at)
+      )
   ));
 
 comment on view holdings_13f_effective is

@@ -273,3 +273,17 @@ test("a re-list filed after a genuine NEW HOLDINGS doesn't drop that amendment's
     "A1@relist:100", "A2@relist:100", "A3@relist:100", "A4@relist:100", "A5@relist:100", "A6@relist:100",
     "NEW1@relist:7", "SECRET@nh1:9"]);
 });
+
+// Value: protects=a later re-list that corrects an earlier NEW HOLDINGS amendment's share count replaces that position (no 9 + 12); fails_when=the copy check only drops exact copies when the re-list is filed after the amendment; why_new=the previous re-list test repeats nothing from nh1; seam=none
+test("a later re-list restating an earlier NEW HOLDINGS position with a new share count counts it once", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2026-08-05" });
+  await rows(pg, "o", [{ t: "A1" }, { t: "A2" }, { t: "A3" }, { t: "A4" }, { t: "A5" }, { t: "A6" }]);
+  await filing(pg, { id: "nh1", filed: "2026-08-10", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "nh1", [{ t: "SECRET", sh: 9 }, { t: "OTHER", sh: 3 }]);
+  await filing(pg, { id: "relist", filed: "2026-08-20", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "relist", [{ t: "A1" }, { t: "A2" }, { t: "A3" }, { t: "A4" }, { t: "A5" }, { t: "A6" }, { t: "SECRET", sh: 12 }]);
+  assert.deepEqual(await effective(pg), [
+    "A1@relist:100", "A2@relist:100", "A3@relist:100", "A4@relist:100", "A5@relist:100", "A6@relist:100",
+    "OTHER@nh1:3", "SECRET@relist:12"]);
+});

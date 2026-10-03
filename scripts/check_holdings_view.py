@@ -13,7 +13,8 @@ Rule (schema/migrations/023_holdings_effective.sql), per (cik, period):
           RESTATEMENT beats an original, then the later accession number wins
   extra = 13F-HR/A NEW HOLDINGS filed on or after the base date, or with no
           base, minus rows that copy a row of the base or of an earlier NEW
-          HOLDINGS amendment (same CUSIP, shares, put/call); a NEW HOLDINGS that repeats
+          HOLDINGS amendment (same CUSIP, shares, put/call), minus securities
+          a base filed on a later date (a re-list) lists again; a NEW HOLDINGS that repeats
           >= half of the base's securities (and >= 5) is a re-list: RESTATEMENT
   rows  = base ∪ extra, minus put/call rows and PRN rows
 
@@ -130,9 +131,12 @@ def check(filings, raw, eff) -> int:
     for (cik, period), (base_id, extras) in sorted(expect.items()):
         ids = ({base_id} if base_id else set()) | set(extras)
         seen_keys = {key(r) for r in rows_by_filing.get(base_id, [])}
+        base_secs = {(r.get("cusip"), r.get("put_call")) for r in rows_by_filing.get(base_id, [])}
         want = sum(1 for r in rows_by_filing.get(base_id, []) if is_long(r))
         for x in extras:  # filing order: each amendment is checked against the base and earlier ones
-            fresh = [r for r in rows_by_filing[x] if is_long(r) and key(r) not in seen_keys]
+            restated = base_id and by_id[base_id]["filed_at"][:10] > by_id[x]["filed_at"][:10]  # later re-list
+            fresh = [r for r in rows_by_filing[x] if is_long(r) and key(r) not in seen_keys
+                     and not (restated and (r.get("cusip"), r.get("put_call")) in base_secs)]
             copied_total += sum(1 for r in rows_by_filing[x] if is_long(r)) - len(fresh)
             want += len(fresh)
             seen_keys |= {key(r) for r in rows_by_filing[x]}
@@ -149,7 +153,8 @@ def check(filings, raw, eff) -> int:
     unreadable = [f["accession_number"] for f in filings if f.get("amendment_type") == "UNREADABLE"]
     if unreadable:
         print(f"WARN {len(unreadable)} amendments have an unreadable type and are kept out of the view"
-              f" (set filings_raw.amendment_type by hand if SEC never serves it): {', '.join(unreadable)}")
+              f" (if SEC never serves the type, set filings_raw.amendment_type to RESTATEMENT or NEW HOLDINGS"
+              f" by hand; the next parse_13f run uses it): {', '.join(unreadable)}")
     amend = [f for f in filings if f["form_type"] == "13F-HR/A"]
     print(f"13F-HR/A filings: {len(amend)} ({Counter(f.get('amendment_type') for f in amend)})")
     if untyped:

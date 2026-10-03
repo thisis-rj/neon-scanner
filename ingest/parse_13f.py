@@ -14,8 +14,10 @@ Amendments (13F-HR/A): the cover page (primary_doc.xml) says whether the
 amendment is a RESTATEMENT (replaces the original) or NEW HOLDINGS (adds
 positions to it). We store that on filings_raw.amendment_type; the
 holdings_13f_effective view uses it to decide replace vs union. If the
-cover page can't be read the column stays NULL and the view treats the
-filing as a restatement (the pre-2026-10 behavior).
+cover page fails to download, nothing is written and the next run retries
+(a type already stored, or set by hand, is used instead). If it downloads
+but has no readable type, the filing is marked UNREADABLE and has no
+holdings rows, so the view leaves it out rather than guess RESTATEMENT.
 
 Idempotent: re-running re-parses any filing by deleting the existing
 holdings_13f rows for that filing_id before re-inserting. So resuming
@@ -209,13 +211,19 @@ def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
         return 0, "info table empty or unparseable"
 
     sb = _supabase()
-    # An amendment whose type we can't read is kept out of the view (no rows;
-    # retried next run) and marked UNREADABLE so it can be listed: counted as a
-    # RESTATEMENT, a 4-row NEW HOLDINGS amendment would replace a 110-row quarter.
-    if filing.get("form_type") == "13F-HR/A" and not record_amendment_type(sb, filing, base, xmls or []):
-        sb.table("holdings_13f").delete().eq("filing_id", filing["id"]).execute()
-        sb.table("filings_raw").update({"amendment_type": UNREADABLE}).eq("id", filing["id"]).execute()
-        return 0, UNREADABLE_ERROR
+    if filing.get("form_type") == "13F-HR/A":
+        result = record_amendment_type(sb, filing, base, xmls or [])
+        if result not in AMENDMENT_TYPES and filing.get("amendment_type") in AMENDMENT_TYPES:
+            pass  # cover page not read this time; keep the type stored earlier (or set by hand)
+        elif result == FETCH_FAILED:
+            return 0, "cover page fetch failed; left as is, will retry"
+        elif result == UNREADABLE:
+            # Counted as a RESTATEMENT, an unknown amendment could replace the whole
+            # quarter (a 4-row NEW HOLDINGS vs a 110-row original). Keep it out of the
+            # view (no rows) and mark it so it can be listed and typed by hand.
+            sb.table("holdings_13f").delete().eq("filing_id", filing["id"]).execute()
+            sb.table("filings_raw").update({"amendment_type": UNREADABLE}).eq("id", filing["id"]).execute()
+            return 0, UNREADABLE_ERROR
 
     # Idempotent: delete existing rows for this filing, then insert fresh.
     sb.table("holdings_13f").delete().eq("filing_id", filing["id"]).execute()
@@ -249,25 +257,34 @@ def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
 
 
 UNREADABLE = "UNREADABLE"
+FETCH_FAILED = "FETCH_FAILED"
 UNREADABLE_ERROR = "amendment type unreadable; kept out of holdings, will retry"
 
 
-def record_amendment_type(sb: Client, filing: dict[str, Any], base: str, xmls: list[str]) -> bool:
-    """Store RESTATEMENT / NEW HOLDINGS on filings_raw. Returns False (and writes nothing) if unreadable."""
+def record_amendment_type(sb: Client, filing: dict[str, Any], base: str, xmls: list[str]) -> str:
+    """Read the cover page and store RESTATEMENT / NEW HOLDINGS on filings_raw.
+
+    Returns the type stored, FETCH_FAILED (temporary: HTTP error or network;
+    nothing written) or UNREADABLE (no cover page, or no readable type in it).
+    """
     primary = pick_primary_doc(xmls)
-    amendment_type = None
-    if primary:
-        try:
-            r = _polite_get(f"{base}/{primary}", HEADERS_XML)
-            if r.status_code == 200:
-                amendment_type = parse_amendment_type(r.content)
-        except requests.RequestException as e:
-            print(f"  WARN {filing['accession_number']}: cover page fetch failed ({e})", file=sys.stderr)
+    if not primary:
+        print(f"  WARN {filing['accession_number']}: no cover page in the filing", file=sys.stderr)
+        return UNREADABLE
+    try:
+        r = _polite_get(f"{base}/{primary}", HEADERS_XML)
+    except requests.RequestException as e:
+        print(f"  WARN {filing['accession_number']}: cover page fetch failed ({e})", file=sys.stderr)
+        return FETCH_FAILED
+    if r.status_code != 200:
+        print(f"  WARN {filing['accession_number']}: cover page HTTP {r.status_code}", file=sys.stderr)
+        return FETCH_FAILED
+    amendment_type = parse_amendment_type(r.content)
     if amendment_type is None:
         print(f"  WARN {filing['accession_number']}: amendment type unreadable", file=sys.stderr)
-        return False
+        return UNREADABLE
     sb.table("filings_raw").update({"amendment_type": amendment_type}).eq("id", filing["id"]).execute()
-    return True
+    return amendment_type
 
 
 def get_unparsed_filings(sb: Client, reparse: bool = False) -> list[dict[str, Any]]:
@@ -279,7 +296,7 @@ def get_unparsed_filings(sb: Client, reparse: bool = False) -> list[dict[str, An
     while True:
         b = (
             sb.table("filings_raw")
-            .select("id,accession_number,cik,filer_name,period_of_report,form_type")
+            .select("id,accession_number,cik,filer_name,period_of_report,form_type,amendment_type")
             .in_("form_type", ["13F-HR", "13F-HR/A"])
             .order("period_of_report", desc=True)
             .order("id")  # ~85 filings tie per quarter; without this, offset pages skip/repeat
@@ -350,7 +367,8 @@ def main() -> None:
     print(f"Errors         : {len(errors)}")
     unreadable = [acc for acc, err in errors if err == UNREADABLE_ERROR]
     if unreadable:
-        # Not retried successfully until SEC's cover page reads; set filings_raw.amendment_type by hand if it never does.
+        # Retried each run; if SEC's cover page never reads, set filings_raw.amendment_type to
+        # RESTATEMENT or NEW HOLDINGS by hand and the next run parses the filing with that type.
         print(f"Amendments with unreadable type (kept out of holdings): {len(unreadable)}: {', '.join(unreadable)}")
     if errors:
         print(f"\nFirst few errors:")

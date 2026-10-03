@@ -60,7 +60,7 @@ def test_file_picking(names, info, primary):
 
 
 # ─── parse_one_filing: amendment type + sh_type reach the database ───────
-# Value: protects=13F-HR/A cover type stored only when read (never blanked), sh_type written, holdings parse even if the cover page fails; fails_when=record_amendment_type writes NULL on a failed read, raises on fetch error, or sh_type is dropped from the insert; why_new=existing tests cover pure parsers only, not the parse→DB write path; seam=none
+# Value: protects=a 13F-HR/A cover type is stored only when read; a temporary fetch failure touches nothing; a stored or hand-set type is reused; a page with no type keeps the filing out of the view; fails_when=a failed fetch deletes rows or marks UNREADABLE, or an unknown amendment gets rows; why_new=no other test covers the parse-to-DB path; seam=none
 import requests  # noqa: E402
 
 import ingest.parse_13f as p13f  # noqa: E402
@@ -92,15 +92,23 @@ class _FakeSupabase:
         return _Q()
 
 
-@pytest.mark.parametrize("form,cover,stored", [
-    ("13F-HR/A", _Resp(200, (FIX / "primary_doc_new_holdings.xml").read_bytes()), "NEW HOLDINGS"),
-    ("13F-HR/A", _Resp(200, (FIX / "primary_doc_restatement.xml").read_bytes()), "RESTATEMENT"),
-    ("13F-HR/A", _Resp(404), None),                                   # cover page missing
-    ("13F-HR/A", requests.ConnectionError("reset"), None),             # retries exhausted
-    ("13F-HR/A", _Resp(200, b"<broken"), None),                        # unreadable cover page
-    ("13F-HR", AssertionError("an original's cover page must not be fetched"), None),
+NH_COVER = _Resp(200, (FIX / "primary_doc_new_holdings.xml").read_bytes())
+RS_COVER = _Resp(200, (FIX / "primary_doc_restatement.xml").read_bytes())
+
+
+@pytest.mark.parametrize("form,cover,already,outcome", [
+    ("13F-HR/A", NH_COVER, None, "store:NEW HOLDINGS"),
+    ("13F-HR/A", RS_COVER, None, "store:RESTATEMENT"),
+    ("13F-HR/A", _Resp(404), None, "untouched"),                         # SEC error: retry later
+    ("13F-HR/A", _Resp(429), None, "untouched"),                         # rate limited
+    ("13F-HR/A", requests.ConnectionError("reset"), None, "untouched"),  # retries exhausted
+    ("13F-HR/A", _Resp(404), "RESTATEMENT", "parse"),                    # stored type reused on --reparse
+    ("13F-HR/A", _Resp(200, b"<broken"), "NEW HOLDINGS", "parse"),       # hand-set type reused
+    ("13F-HR/A", _Resp(200, b"<broken"), None, "unreadable"),            # page read, no type in it
+    ("13F-HR/A", _Resp(200, b"<broken"), "UNREADABLE", "unreadable"),
+    ("13F-HR", AssertionError("an original's cover page must not be fetched"), None, "parse"),
 ])
-def test_parse_one_filing_records_amendment_type_only_when_read(monkeypatch, form, cover, stored):
+def test_parse_one_filing_amendment_type_outcomes(monkeypatch, form, cover, already, outcome):
     def fake_get(url, _headers):
         if url.endswith("/index.json"):
             return _Resp(200, payload={"directory": {"item": [
@@ -116,24 +124,23 @@ def test_parse_one_filing_records_amendment_type_only_when_read(monkeypatch, for
     monkeypatch.setattr(p13f, "_polite_get", fake_get)
     monkeypatch.setattr(p13f, "_supabase", lambda: sb)
     filing = {"id": "f-1", "cik": "949509", "accession_number": "0000949509-26-000004",
-              "period_of_report": "2026-03-31", "form_type": form}
+              "period_of_report": "2026-03-31", "form_type": form, "amendment_type": already}
+    ops = lambda: [(o["table"], o["op"], o.get("values")) for o in sb.ops]
 
-    unreadable_amendment = form == "13F-HR/A" and stored is None
-    if unreadable_amendment:
-        # Kept out of the view (old rows removed, retried next run) and marked UNREADABLE:
-        # an untyped amendment would count as a RESTATEMENT and could replace the whole quarter.
-        assert p13f.parse_one_filing(filing) == (0, p13f.UNREADABLE_ERROR)
-        assert [(o["table"], o["op"], o.get("values")) for o in sb.ops] == [
-            ("holdings_13f", "delete", None), ("filings_raw", "update", {"amendment_type": "UNREADABLE"})]
+    if outcome == "untouched":
+        # A temporary failure never deletes rows or overwrites a stored type.
+        assert p13f.parse_one_filing(filing) == (0, "cover page fetch failed; left as is, will retry")
+        assert sb.ops == []
         return
-    assert p13f.parse_one_filing(filing) == (6, None)
+    if outcome == "unreadable":
+        # Counted as a RESTATEMENT an unknown amendment could replace the quarter: keep it out, mark it.
+        assert p13f.parse_one_filing(filing) == (0, p13f.UNREADABLE_ERROR)
+        assert ops() == [("holdings_13f", "delete", None), ("filings_raw", "update", {"amendment_type": "UNREADABLE"})]
+        return
 
-    updates = [o for o in sb.ops if o["table"] == "filings_raw"]
-    if stored is None:
-        assert updates == []  # an original's cover page is never read or written
-    else:
-        assert updates == [{"table": "filings_raw", "op": "update", "values": {"amendment_type": stored},
-                            "eq": ("id", "f-1")}]
+    assert p13f.parse_one_filing(filing) == (6, None)
+    updates = [o["values"] for o in sb.ops if o["table"] == "filings_raw"]
+    assert updates == ([{"amendment_type": outcome.split(":", 1)[1]}] if outcome.startswith("store:") else [])
     inserted = [r for o in sb.ops if o.get("op") == "insert" for r in o["rows"]]
     assert sorted(r["sh_type"] for r in inserted) == ["PRN", "PRN", "SH", "SH", "SH", "SH"]
     assert [o["op"] for o in sb.ops if o["table"] == "holdings_13f"] == ["delete", "insert"]
