@@ -1,5 +1,5 @@
 // Server-side loader for /funds. Calls the fund_flows() SQL function (migration
-// 025), which does all the counting; the pure rules in fund-flow-rules.ts then
+// 027), which does all the counting; the pure rules in fund-flow-rules.ts then
 // label, filter and sort. Server Components only (uses the secret key).
 
 import { supabaseServer } from "@/lib/supabase";

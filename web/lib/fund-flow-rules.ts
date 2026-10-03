@@ -2,7 +2,7 @@
 // the industry rollup. No imports on purpose — tests/web/fund-flow-rules.test.mjs
 // runs this file directly with `node --test --experimental-strip-types`.
 // Counting (net, tier-weighted, conviction, streak) is NOT here: it lives in the
-// fund_flows() SQL function (migration 025) so every view counts the same way.
+// fund_flows() SQL function (migration 027) so every view counts the same way.
 
 export type FundEvent = "opened" | "added" | "trimmed" | "exited";
 

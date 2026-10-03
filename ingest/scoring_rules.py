@@ -437,7 +437,7 @@ def compute_signals(
 # One row per fund × stock × quarter pair: what the fund did to the stock
 # between two of its own consecutive 13F filings. No scoring here — the
 # counting (net funds, tier-weighted net, conviction, streak) happens in the
-# fund_flows() SQL function (migration 025) so every view counts the same way.
+# fund_flows() SQL function (migration 027) so every view counts the same way.
 #
 #   opened   absent in the earlier filing, present now
 #   added    split-adjusted shares up ≥ 10%

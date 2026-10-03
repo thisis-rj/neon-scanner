@@ -182,7 +182,7 @@ def upsert_splits(sb: Client, ticker: str, splits: list[tuple[str, float]]) -> N
 
 
 def has_fund_flow_schema(sb: Client) -> bool:
-    """True once migration 025 (tickers.industry, stock_splits) is applied.
+    """True once migration 027 (tickers.industry, stock_splits) is applied.
     prices.py runs in a job parallel to `ingest.migrate`, so on the first night
     the columns may not exist yet; writing them would fail every upsert."""
     try:
@@ -210,7 +210,7 @@ def main() -> None:
     sb = _supabase()
     with_labels = has_fund_flow_schema(sb)
     if not with_labels:
-        print("  migration 025 not applied yet — skipping industry/sector/splits this run", flush=True)
+        print("  migration 027 not applied yet — skipping industry/sector/splits this run", flush=True)
     t0 = time.monotonic()
     ok = fail = 0
     for i, t in enumerate(tickers, 1):

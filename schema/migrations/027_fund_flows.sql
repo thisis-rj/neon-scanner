@@ -209,6 +209,6 @@ as $$
 $$;
 
 comment on function fund_flows(int, text[], text[]) is
-  'Per-stock fund buying/selling from fund_position_changes, with optional tier/category filters. See migration 025.';
+  'Per-stock fund buying/selling from fund_position_changes, with optional tier/category filters. See migration 027.';
 
 grant execute on function fund_flows(int, text[], text[]) to authenticated, service_role, anon;

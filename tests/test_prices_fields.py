@@ -64,7 +64,7 @@ def test_upsert_writes_labels_only_when_enabled_and_present():
     assert rows["AAA"]["market_cap_usd"] == 5e9 and "splits" not in rows["AAA"]
 
 
-def test_schema_check_is_false_until_migration_025_applies():
+def test_schema_check_is_false_until_migration_027_applies():
     assert has_fund_flow_schema(FakeSB()) is True
     assert has_fund_flow_schema(FakeSB(missing={"tickers"})) is False
     assert has_fund_flow_schema(FakeSB(missing={"stock_splits"})) is False

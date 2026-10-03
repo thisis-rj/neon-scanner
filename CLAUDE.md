@@ -115,7 +115,7 @@ There will be weeks where nothing surfaces. That is correct behavior. Do not add
 - `events_13d` — 13D/G filings parsed for activist stake disclosures.
 - `events_form4` — insider transactions.
 - `insider_transactions` — universe-wide Form 4 open-market buys the scorer reads for insider clusters (§6.3), with `is_10b5_1`, `shares_owned_after`, `direct_indirect` (migration 024).
-- `tickers` — the investable universe with the latest snapshot of price + return windows, plus Yahoo `industry` / `sector` labels (migration 025).
+- `tickers` — the investable universe with the latest snapshot of price + return windows, plus Yahoo `industry` / `sector` labels (migration 027).
 - `stock_splits` — split history (ratio = new shares per old share), so splits don't read as adds or trims.
 - `fund_position_changes` — what each fund did to each stock between its own consecutive 13F filings (opened / added / trimmed / exited). Read only through the `fund_flows()` SQL function (§6.1a).
 - `stock_signal_extras` — insider-cluster and activist-13D columns for /funds, computed with the v6 scorer's rules.
@@ -155,7 +155,7 @@ If a future maintainer wants to add or remove a filer, the test is:
 - `ingest/compute_fund_flows.py` (nightly, after `cusip_resolver`) writes `fund_position_changes`; rules in `ingest/scoring_rules.py` (`fund_position_changes`, `stock_signal_extras`), tests in `tests/test_fund_flows.py`.
 - Each fund's newest filing is compared with its own previous filing (lag 1; lag 2 = two filings back). Early filers count the day they file; a fund whose newest filing is older than the previous reporting quarter (latest quarter whose 45-day deadline has passed) is left out; a fund with a single filing records nothing.
 - Added / trimmed = split-adjusted share change ≥ 10%. Tickers resolve through today's `cusip_ticker_map` for both quarters, then the stored ticker, then an issuer-name match.
-- **All counting lives in `fund_flows()`** (migration 025): net funds, tier-weighted net (S 1.5 · A 1.2 · B 1.0 · C 0.7), conviction (share of each buying fund's 13F book), streak, and the tier/style/lag filters. Don't re-count in TypeScript or Python; extend the function and `tests/sql/fund_flows.test.mjs`.
+- **All counting lives in `fund_flows()`** (migration 027): net funds, tier-weighted net (S 1.5 · A 1.2 · B 1.0 · C 0.7), conviction (share of each buying fund's 13F book), streak, and the tier/style/lag filters. Don't re-count in TypeScript or Python; extend the function and `tests/sql/fund_flows.test.mjs`.
 - Split history older than 13 months comes from a one-time `python -m ingest.backfill_splits`; the nightly prices job adds new splits.
 
 ### 6.2 13D / 13G

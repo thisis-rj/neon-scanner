@@ -42,7 +42,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 
 // /funds — which stocks the tracked funds are buying or leaving, by industry.
 // Every number is a count of named 13F changes (opened / added / trimmed /
-// exited, ≥10% split-adjusted) from fund_flows() (migration 025); the label is
+// exited, ≥10% split-adjusted) from fund_flows() (migration 027); the label is
 // a printed threshold rule over those counts (§2.4). Sells sit in the same list
 // with the same prominence as buys (§2.3).
 export const dynamic = "force-dynamic";
@@ -77,7 +77,7 @@ export default async function FundsPage({ searchParams }: { searchParams: Promis
               <EmptyHeader>
                 <EmptyTitle>Fund flows haven&apos;t been computed yet</EmptyTitle>
                 <EmptyDescription>
-                  The nightly job creates this data after migration 025 is applied (
+                  The nightly job creates this data after migration 027 is applied (
                   <code className="font-mono text-xs">python -m ingest.migrate</code>, then{" "}
                   <code className="font-mono text-xs">python -m ingest.compute_fund_flows</code>).
                 </EmptyDescription>

@@ -1,4 +1,4 @@
-// Tests for fund_flows() and its tables (migration 025) — the /funds page's
+// Tests for fund_flows() and its tables (migration 027) — the /funds page's
 // only counting code. Runs the real migration SQL in PGlite.
 //   cd tests/sql && npm ci && node --test
 import { test } from "node:test";
@@ -6,9 +6,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 
-const MIGRATION = readFileSync(new URL("../../schema/migrations/025_fund_flows.sql", import.meta.url), "utf8");
+const MIGRATION = readFileSync(new URL("../../schema/migrations/027_fund_flows.sql", import.meta.url), "utf8");
 
-// tickers as it exists before 025 (schema/supabase.sql), plus the roles
+// tickers as it exists before 027 (schema/supabase.sql), plus the roles
 // Supabase provides that the migration's grant names.
 const BASE_SCHEMA = `
 create role anon; create role authenticated; create role service_role;

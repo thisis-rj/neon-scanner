@@ -4,7 +4,7 @@ What each tracked fund did to each stock between its own consecutive 13F
 filings (opened / added / trimmed / exited, ≥10% split-adjusted), plus the
 insider-cluster and activist-13D columns. All the rules live in
 ingest/scoring_rules.py (fund_position_changes, stock_signal_extras); all the
-counting lives in the fund_flows() SQL function (migration 025).
+counting lives in the fund_flows() SQL function (migration 027).
 
 Writes are safe to repeat: every row is upserted with this run's run_id, then
 rows from older runs are deleted. A crash mid-run leaves older, still-valid rows.
@@ -56,7 +56,7 @@ def load_inputs(sb: Client):
     splits = defaultdict(list)
     try:
         split_rows = paginated(sb, "stock_splits", "ticker,split_date,ratio", order="ticker,split_date")
-    except Exception as e:  # migration 025 not applied yet (only reachable with --dry-run)
+    except Exception as e:  # migration 027 not applied yet (only reachable with --dry-run)
         print(f"  stock_splits unreadable ({e}); continuing without splits", flush=True)
         split_rows = []
     for r in split_rows:
