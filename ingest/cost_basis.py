@@ -82,12 +82,14 @@ def _supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
 
 
-def paginated(sb, table, sel, **filters):
+def paginated(sb, table, sel, order=None, **filters):
     out, off = [], 0
     while True:
         q = sb.table(table).select(sel)
         for k, v in filters.items():
             q = q.eq(k, v)
+        if order:  # offset paging over a view needs a stable order
+            q = q.order(order)
         b = q.range(off, off + 999).execute()
         if not b.data:
             break
@@ -185,7 +187,7 @@ def main() -> None:
         all_h.extend(paginated(
             sb, "holdings_13f_effective",
             "cik,ticker,issuer_name,period_of_report,shares,value_usd",
-            cik=c,
+            order="id", cik=c,
         ))
     print(f"  {len(all_h):,} rows across {len(filer_ciks)} filers", flush=True)
 

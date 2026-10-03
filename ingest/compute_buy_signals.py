@@ -39,12 +39,14 @@ def _supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
 
 
-def paginated(sb, table, sel, **filters):
+def paginated(sb, table, sel, order=None, **filters):
     out, off = [], 0
     while True:
         q = sb.table(table).select(sel)
         for k, v in filters.items():
             q = q.eq(k, v)
+        if order:  # offset paging over a view needs a stable order
+            q = q.order(order)
         b = q.range(off, off + 999).execute()
         if not b.data:
             break
@@ -77,7 +79,7 @@ def main() -> None:
     filings = paginated(sb, "filings_raw", "id,cik,form_type,filed_at,period_of_report")
     # Effective long-equity rows only: amendments resolved, options and bond
     # principal (PRN) excluded — see schema/migrations/023_holdings_effective.sql.
-    holding_rows = paginated(sb, "holdings_13f_effective", "filing_id,ticker,shares,issuer_name")
+    holding_rows = paginated(sb, "holdings_13f_effective", "filing_id,ticker,shares,issuer_name", order="id")
     insider_rows = paginated(sb, "insider_transactions",
                              "issuer_ticker,reporter_cik,transaction_date,filed_at,reporter_name,value_usd,"
                              "reporter_is_officer,reporter_is_director,is_10b5_1,shares,shares_owned_after,direct_indirect")
