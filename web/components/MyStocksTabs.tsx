@@ -127,8 +127,21 @@ function StockAnalysisPanel({ ticker }: { ticker: string }) {
                           <div className="text-[11px] text-muted-foreground">{fmtShares(f.shares)} sh</div>
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-muted-foreground">
-                          {f.estCost != null ? `~${fmtUsdExact(f.estCost, true)}` : "—"}
-                          {f.firstSeen && <div className="text-[11px] text-muted-foreground/70">since {f.firstSeen.slice(0, 7)}</div>}
+                          {f.estCost != null ? (
+                            <>
+                              ~{fmtUsdExact(f.estCost, true)}
+                              {f.firstSeen && (
+                                <div className="text-[11px] text-muted-foreground/70">since {f.firstSeen.slice(0, 7)}</div>
+                              )}
+                            </>
+                          ) : f.shares > 0 ? (
+                            <>
+                              {fmtUsdExact(f.value / f.shares, true)}
+                              <div className="text-[11px] text-muted-foreground/70">qtr mark</div>
+                            </>
+                          ) : (
+                            "—"
+                          )}
                         </TableCell>
                         <TableCell className="text-right">
                           <Badge variant={cm.variant} className="font-normal">{cm.label}</Badge>
@@ -222,9 +235,10 @@ function StockAnalysisPanel({ ticker }: { ticker: string }) {
       )}
 
       <p className="mt-3 text-[11px] text-muted-foreground/70">
-        13F is a quarterly snapshot filed up to 45 days late — fund entry prices are <em>estimates</em> (shares added
-        that quarter × that quarter&rsquo;s avg price) and an &ldquo;exit&rdquo; means the fund stopped reporting it.
-        Only insider (Form 4) rows are real dated trades.
+        13F is a quarterly snapshot filed up to 45 days late. &ldquo;Est. entry&rdquo; is a VWAP-based estimate of a
+        fund&rsquo;s average cost; where it isn&rsquo;t computed, the quarter-end <em>mark</em> (value ÷ shares) is
+        shown instead — close to entry only for just-added positions. An &ldquo;exit&rdquo; means the fund stopped
+        reporting it. Only insider (Form 4) rows are real dated trades.
       </p>
     </div>
   );
