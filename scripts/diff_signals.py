@@ -47,7 +47,7 @@ REPO = Path(__file__).resolve().parent.parent
 # columns are skipped so older databases still snapshot.
 SNAPSHOT_TABLES = {
     "tickers": "*",
-    "filings_raw": "id,cik,form_type,filed_at,period_of_report,amendment_type",
+    "filings_raw": "id,cik,form_type,filed_at,period_of_report,amendment_type,accession_number",
     "holdings_13f": "filing_id,cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd,put_call,sh_type",
     "holdings_13f_effective": "filing_id,cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd,put_call,sh_type",
     "insider_transactions": "*",

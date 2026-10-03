@@ -61,7 +61,7 @@ def load(args):
         return filings, t["holdings_13f"], t["holdings_13f_effective"]
     sb = _supabase()
     filings = [f for ft in ("13F-HR", "13F-HR/A")
-               for f in _fetch_all(sb, "filings_raw", "id,cik,form_type,filed_at,period_of_report,amendment_type", form_type=ft)]
+               for f in _fetch_all(sb, "filings_raw", "id,cik,form_type,filed_at,period_of_report,amendment_type,accession_number", form_type=ft)]
     raw = _fetch_all(sb, "holdings_13f", "id,filing_id,cusip,shares,put_call,sh_type")
     eff = _fetch_all(sb, "holdings_13f_effective", "id,filing_id,put_call,sh_type")
     return filings, raw, eff
@@ -80,9 +80,9 @@ def expected_filings(filings, raw_rows):
             if f["form_type"] == "13F-HR":
                 return "ORIGINAL"
             return "NEW HOLDINGS" if f.get("amendment_type") == "NEW HOLDINGS" else "RESTATEMENT"
-        bases = sorted((f for f in fs if kind(f) != "NEW HOLDINGS"), key=lambda f: (f["filed_at"], f["id"]))
+        bases = sorted((f for f in fs if kind(f) != "NEW HOLDINGS"), key=lambda f: (f["filed_at"][:10], kind(f) == "RESTATEMENT", f.get("accession_number") or "", f["id"]))
         base = bases[-1] if bases else None
-        extras = [f["id"] for f in fs if kind(f) == "NEW HOLDINGS" and (base is None or f["filed_at"] > base["filed_at"])]
+        extras = [f["id"] for f in fs if kind(f) == "NEW HOLDINGS" and (base is None or f["filed_at"][:10] >= base["filed_at"][:10])]
         out[q] = (base["id"] if base else None, extras)
     return out
 

@@ -34,7 +34,7 @@ async function filing(pg, { id, cik = "1", period = "2026-06-30", filed, form = 
   await pg.query(
     `insert into filings_raw (id, accession_number, cik, filer_name, form_type, filed_at, period_of_report, amendment_type)
      values ($1, $2, $3, 'Fund ' || $3, $4, $5, $6, $7)`,
-    [id, `acc-${++acc}`, cik, form, filed, period, amendment],
+    [id, `0000000000-26-${String(++acc).padStart(6, "0")}`, cik, form, filed, period, amendment],
   );
 }
 async function rows(pg, filingId, list) {
@@ -189,4 +189,38 @@ test("holdings_recent() returns the 2 latest periods per filer from the view", a
 test("migration is re-runnable", async () => {
   const pg = await db();
   await pg.exec(MIGRATION);
+});
+
+// Value: protects=a same-day 13F-HR/A RESTATEMENT replaces its original (filed_at is date-only, ids are random UUIDs); fails_when=base tie-break on filed_at falls to id order and picks the original; why_new=all existing restatement cases file the amendment on a later day; seam=none
+test("RESTATEMENT filed the same day as the original still replaces it, whatever the ids", async () => {
+  const pg = await db();
+  // filings_raw.filed_at is written as <date>T00:00:00Z and ids are gen_random_uuid(),
+  // so a same-day correction ties on filed_at; give the original the higher id.
+  await filing(pg, { id: "zz-original", filed: "2026-08-14" });
+  await rows(pg, "zz-original", [{ t: "AAA", sh: 100 }, { t: "WRONG" }]);
+  await filing(pg, { id: "aa-restated", filed: "2026-08-14", form: "13F-HR/A", amendment: "RESTATEMENT" });
+  await rows(pg, "aa-restated", [{ t: "AAA", sh: 150 }]);
+  assert.deepEqual(await effective(pg), ["AAA@aa-restated:150"]);
+});
+
+// Value: protects=two same-day RESTATEMENTs resolve to the later-filed one (higher accession number); fails_when=the tie-break drops accession_number and falls back to random ids; why_new=the test above only ties an original against one restatement; seam=none
+test("two RESTATEMENTs on the same day: the later accession number wins, whatever the ids", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2026-08-14" });
+  await rows(pg, "o", [{ t: "AAA", sh: 100 }]);
+  await filing(pg, { id: "zz-first", filed: "2026-09-01", form: "13F-HR/A", amendment: "RESTATEMENT" });
+  await rows(pg, "zz-first", [{ t: "AAA", sh: 120 }]);
+  await filing(pg, { id: "aa-second", filed: "2026-09-01", form: "13F-HR/A", amendment: "RESTATEMENT" });
+  await rows(pg, "aa-second", [{ t: "AAA", sh: 130 }]);
+  assert.deepEqual(await effective(pg), ["AAA@aa-second:130"]);
+});
+
+// Value: protects=a NEW HOLDINGS amendment filed the same day as its original still adds its positions; fails_when=the view goes back to a strict filed_at > base comparison on a date-only column; why_new=existing NEW HOLDINGS cases are all filed on a later day; seam=none
+test("NEW HOLDINGS filed the same day as the original still adds its new positions (copies still dropped)", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2026-08-14" });
+  await rows(pg, "o", [{ t: "AAA", sh: 100 }]);
+  await filing(pg, { id: "nh", filed: "2026-08-14", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "nh", [{ t: "AAA", sh: 100 }, { t: "BBB", sh: 50 }]);
+  assert.deepEqual(await effective(pg), ["AAA@o:100", "BBB@nh:50"]);
 });

@@ -14,10 +14,10 @@
 --
 -- RULE, per (cik, period_of_report):
 --   base  = most recently filed of {13F-HR, 13F-HR/A RESTATEMENT} that has
---           at least one holdings row (a filing whose table failed to parse
+--           at least one holdings row (same day: RESTATEMENT, then later accession) (a filing whose table failed to parse
 --           never wipes out the quarter). amendment_type NULL on a 13F-HR/A
 --           (cover page unreadable) counts as RESTATEMENT.
---   extra = 13F-HR/A NEW HOLDINGS filed after the base (or with no base),
+--   extra = 13F-HR/A NEW HOLDINGS filed on or after the base date (or with no base),
 --           minus any row that is an exact copy of a base row (same CUSIP,
 --           shares, put/call). Filers sometimes label a full re-list
 --           "NEW HOLDINGS": First Eagle Q2-2026 re-listed all 614 original
@@ -37,7 +37,7 @@ create index if not exists holdings_13f_filing_id_idx on holdings_13f(filing_id)
 create or replace view holdings_13f_effective as
 with thirteenf as (
   select
-    f.id, f.cik, f.period_of_report, f.filed_at,
+    f.id, f.cik, f.period_of_report, f.filed_at, f.accession_number,
     case
       when f.form_type = '13F-HR' then 'ORIGINAL'
       when f.amendment_type = 'NEW HOLDINGS' then 'NEW HOLDINGS'
@@ -51,7 +51,10 @@ base as (
   select distinct on (cik, period_of_report) id, cik, period_of_report, filed_at
   from thirteenf
   where kind in ('ORIGINAL', 'RESTATEMENT')
-  order by cik, period_of_report, filed_at desc, id desc
+  -- filed_at is a date, so an original and its restatement can tie: the
+  -- restatement wins, then the later accession number (never the random id).
+  order by cik, period_of_report, filed_at desc, (kind = 'RESTATEMENT') desc,
+           accession_number desc, id desc
 ),
 effective_filings as (
   select id, null as base_id from base
@@ -60,7 +63,9 @@ effective_filings as (
   from thirteenf n
   left join base b on b.cik = n.cik and b.period_of_report = n.period_of_report
   where n.kind = 'NEW HOLDINGS'
-    and (b.id is null or n.filed_at > b.filed_at)
+    -- >= because filed_at is a date: a same-day NEW HOLDINGS still counts;
+    -- the copy check below drops any rows that repeat the base.
+    and (b.id is null or n.filed_at >= b.filed_at)
 )
 select h.*
 from holdings_13f h
