@@ -83,6 +83,24 @@ def classify(market_cap: float | None, dollar_vol: float | None, ret_6mo: float 
     return "tradeable"
 
 
+def info_fields(info: dict[str, Any] | None) -> dict[str, str | None]:
+    """Yahoo's industry and sector labels from a t.info dict (None when absent)."""
+    out: dict[str, str | None] = {}
+    for key in ("industry", "sector"):
+        v = (info or {}).get(key)
+        out[key] = v.strip() if isinstance(v, str) and v.strip() else None
+    return out
+
+
+def splits_from_history(hist) -> list[tuple[str, float]]:
+    """[(YYYY-MM-DD, ratio)] from the 'Stock Splits' column yfinance includes in
+    history(). ratio = new shares per old share (2.0 = 2-for-1, 0.1 = 1-for-10)."""
+    if hist is None or "Stock Splits" not in getattr(hist, "columns", ()):
+        return []
+    col = hist["Stock Splits"]
+    return [(idx.strftime("%Y-%m-%d"), float(r)) for idx, r in col[col > 0].items()]
+
+
 def fetch_price_for_ticker(yf_module, ticker: str) -> dict[str, Any] | None:
     """One ticker's stats from yfinance. Returns None on any failure."""
     try:
@@ -106,16 +124,20 @@ def fetch_price_for_ticker(yf_module, ticker: str) -> dict[str, Any] | None:
         ret_3mo = _ret(63)   # ~63 trading days = 3mo
         ret_6mo = _ret(126)
         ret_12mo = _ret(252)
-        # market cap from .info (may rate-limit or fail; handle gracefully)
+        # market cap + industry/sector from .info (may rate-limit or fail; handle gracefully)
         market_cap = None
+        labels = info_fields(None)
         try:
             info = t.info
             mc = info.get("marketCap")
             if isinstance(mc, (int, float)) and mc > 0:
                 market_cap = float(mc)
+            labels = info_fields(info)
         except Exception:
             pass
         return {
+            **labels,
+            "splits": splits_from_history(hist),
             "price": last_close,
             "market_cap_usd": market_cap,
             "avg_dollar_volume_20d": avg_dollar_vol,
@@ -127,7 +149,8 @@ def fetch_price_for_ticker(yf_module, ticker: str) -> dict[str, Any] | None:
         return None
 
 
-def upsert_ticker(sb: Client, ticker: str, name: str, stats: dict[str, Any] | None) -> None:
+def upsert_ticker(sb: Client, ticker: str, name: str, stats: dict[str, Any] | None,
+                  with_labels: bool = False) -> None:
     row = {
         "ticker": ticker,
         "name": name,
@@ -143,7 +166,31 @@ def upsert_ticker(sb: Client, ticker: str, name: str, stats: dict[str, Any] | No
             stats["return_6mo"] if stats else None,
         ),
     }
+    # Only write labels Yahoo actually returned: a failed .info call must not
+    # wipe yesterday's industry (market cap has that problem; labels shouldn't).
+    if with_labels and stats:
+        row.update({k: stats[k] for k in ("industry", "sector") if stats.get(k)})
     sb.table("tickers").upsert(row, on_conflict="ticker").execute()
+
+
+def upsert_splits(sb: Client, ticker: str, splits: list[tuple[str, float]]) -> None:
+    if splits:
+        sb.table("stock_splits").upsert(
+            [{"ticker": ticker, "split_date": d, "ratio": r} for d, r in splits],
+            on_conflict="ticker,split_date",
+        ).execute()
+
+
+def has_fund_flow_schema(sb: Client) -> bool:
+    """True once migration 025 (tickers.industry, stock_splits) is applied.
+    prices.py runs in a job parallel to `ingest.migrate`, so on the first night
+    the columns may not exist yet; writing them would fail every upsert."""
+    try:
+        sb.table("tickers").select("industry").limit(1).execute()
+        sb.table("stock_splits").select("ticker").limit(1).execute()
+        return True
+    except Exception:
+        return False
 
 
 def main() -> None:
@@ -161,6 +208,9 @@ def main() -> None:
         tickers = tickers[: args.limit]
 
     sb = _supabase()
+    with_labels = has_fund_flow_schema(sb)
+    if not with_labels:
+        print("  migration 025 not applied yet — skipping industry/sector/splits this run", flush=True)
     t0 = time.monotonic()
     ok = fail = 0
     for i, t in enumerate(tickers, 1):
@@ -170,7 +220,12 @@ def main() -> None:
             time.sleep(0.3)
         stats = fetch_price_for_ticker(yf, t["ticker"])
         try:
-            upsert_ticker(sb, t["ticker"], t["name"], stats)
+            upsert_ticker(sb, t["ticker"], t["name"], stats, with_labels)
+            if stats and with_labels:
+                try:
+                    upsert_splits(sb, t["ticker"], stats["splits"])
+                except Exception as e:  # a split write never fails the price row
+                    print(f"  splits upsert failed for {t['ticker']}: {e}", flush=True)
             if stats:
                 ok += 1
             else:
