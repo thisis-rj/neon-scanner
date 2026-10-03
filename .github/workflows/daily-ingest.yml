@@ -72,6 +72,12 @@ jobs:
         run: python -m ingest.earnings_calendar
         continue-on-error: true
 
+      - name: Mag7 sleeve — month-end signal + model sleeve (8 tickers, ~5s)
+        # Personal strategy tracker on /lag7 (CLAUDE.md §2.2 exception).
+        # Idempotent; writes only new month-ends / fills. Needs migration 030.
+        run: python -m ingest.mag7
+        continue-on-error: true
+
   # ──────────────────────────────────────────────────────────────────
   # SEC EDGAR PIPELINE — every ingest that hits sec.gov.
   # All scripts use 8 req/sec pacing (under SEC's 10/s limit).
