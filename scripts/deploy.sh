@@ -28,8 +28,19 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 # Needs SUPABASE_PAT in .env. A failed migration stops the deploy (set -e).
 # Gap: merging a PR on GitHub skips this script, so run it (or
 # `python -m ingest.migrate`) yourself before merging a PR that adds a migration.
-PY="$ROOT/.venv/bin/python"; [ -x "$PY" ] || PY=python3
-"$PY" -m ingest.migrate
+# Only on main (other branches are previews and must not change production's
+# schema), and only with every migration committed: migrate.py records a file
+# by name, so an edited-later draft would be stuck in production.
+if [ "$BRANCH" = "main" ]; then
+  if [ -n "$(git status --porcelain -- schema/migrations)" ]; then
+    echo "✗ Uncommitted changes in schema/migrations — commit them first." >&2
+    exit 1
+  fi
+  PY="$ROOT/.venv/bin/python"; [ -x "$PY" ] || PY=python3
+  "$PY" -m ingest.migrate
+else
+  echo "• Not on main: skipping production migrations (preview deploy)."
+fi
 
 git add -A
 if git diff --cached --quiet; then
