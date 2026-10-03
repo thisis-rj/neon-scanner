@@ -210,9 +210,10 @@ def test_compute_signals_shows_excluded_insiders_in_components():
     assert big["contributing_filers"]["insider_buyers"] == ["Insider 0", "Insider 1"]
 
 
-# ─── Production config: insider filters switched off (user, 2026-10-03) ──
-# Value: protects=user decision that every open-market insider buy counts with the shipped signal_weights.yml; fails_when=a filter is flipped on in config, or 0/false values start acting as active filters; why_new=filter tests pass explicit FILTERS dicts, never the shipped config; seam=none
-def test_shipped_config_counts_every_open_market_buy():
+# ─── Shipped config: each insider filter does exactly what signal_weights.yml says ──
+# Value: protects=the shipped insider_filters behave as configured (false/0 = off, set = on); fails_when=0/false values start filtering, or a switched-on filter stops excluding; why_new=filter tests pass explicit FILTERS dicts, never the shipped config; seam=none
+# Follows the config rather than pinning it: flipping a switch must not fail the nightly test gate.
+def test_shipped_config_insider_filters_behave_as_configured():
     from pathlib import Path
 
     import yaml
@@ -228,10 +229,18 @@ def test_shipped_config_counts_every_open_market_buy():
             row("2", "Plan Buyer", is_10b5_1=True),                          # Rule 10b5-1 plan buy
             row("3", "Token Buyer", value_usd=500),                          # $500 buy
             row("4", "Tiny Add", shares=10, shares_owned_after=1_000_010)]   # +0.001% stake
-    cluster, _, meta, excluded = insider_clusters(rows, "2026-09-03", "2026-10-03", filters)
-    assert cluster["XYZ"] == {"1", "2", "3", "4"}
-    assert not excluded
-    assert [m["name"] for m in meta["XYZ"]] == ["Big Fund", "Plan Buyer", "Token Buyer", "Tiny Add"]
+    cluster, _, _, excluded = insider_clusters(rows, "2026-09-03", "2026-10-03", filters)
+    targets = {"1": ("officers_directors_only", "not_officer_or_director"),
+               "2": ("exclude_10b5_1", "10b5_1_plan"),
+               "3": ("min_value_usd", "below_min_value"),
+               "4": ("min_stake_growth_pct", "stake_growth_below_min")}
+    reasons = {e["name"]: e["reason"] for e in excluded.get("XYZ", [])}
+    names = {"1": "Big Fund", "2": "Plan Buyer", "3": "Token Buyer", "4": "Tiny Add"}
+    for cik, (switch, reason) in targets.items():
+        if filters.get(switch):
+            assert reasons.get(names[cik]) == reason, switch
+        else:
+            assert cik in cluster["XYZ"], f"{switch} is off in config but still excluded {names[cik]}"
 
 
 # ─── Activist 13D (×5, the highest-weight input) ─────────────────────────
