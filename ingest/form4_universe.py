@@ -268,6 +268,11 @@ def insert_transactions(sb: Client, rows: list[dict[str, Any]]) -> int:
     """
     if not rows:
         return 0
+    # ON CONFLICT DO UPDATE rejects the whole statement if two rows share a key
+    # (the daily index lists a filing under issuer and owner; lots can repeat).
+    by_key = {(r.get("accession_number"), r.get("reporter_cik"), r.get("transaction_date"),
+               r.get("transaction_code"), r.get("shares")): r for r in rows}
+    rows = list(by_key.values())
     try:
         result = sb.table("insider_transactions").upsert(
             rows,

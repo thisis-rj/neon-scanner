@@ -146,3 +146,27 @@ def test_daily_upsert_refreshes_existing_rows():
     assert insert_transactions(sb, [{"accession_number": "a", "is_10b5_1": True}]) == 1
     assert calls == [{"on_conflict": "accession_number,reporter_cik,transaction_date,transaction_code,shares",
                       "ignore_duplicates": False}]
+
+
+# Value: protects=a daily batch with two rows sharing the conflict key is still written (deduped first); fails_when=dedup is removed and Postgres rejects the whole ON CONFLICT DO UPDATE batch; why_new=the refresh test above sends one row; seam=none
+def test_daily_upsert_dedups_conflict_keys():
+    from ingest.form4_universe import insert_transactions
+
+    sent = []
+
+    class _Table:
+        def upsert(self, rows, **kw):
+            keys = [(r["accession_number"], r["reporter_cik"], r["transaction_date"], r["transaction_code"], r["shares"])
+                    for r in rows]
+            assert len(keys) == len(set(keys)), "Postgres: ON CONFLICT DO UPDATE cannot affect row a second time"
+            sent.extend(rows)
+            return self
+
+        def execute(self):
+            return type("R", (), {"data": sent})()
+
+    row = {"accession_number": "0001-26-000001", "reporter_cik": "9", "transaction_date": "2026-09-20",
+           "transaction_code": "P", "shares": 100}
+    sb = type("SB", (), {"table": lambda self, name: _Table()})()
+    # Same filing listed under issuer and owner in the daily index, plus one distinct lot.
+    assert insert_transactions(sb, [dict(row), dict(row), dict(row, shares=200)]) == 2
