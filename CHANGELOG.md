@@ -8,14 +8,14 @@ Author: Vijay (with Claude). Branch `fix/data-correctness`, rebased onto `040906
 
 ### 13F: one rule for "what a fund really holds"
 
-- New view **`holdings_13f_effective`** (migration `023`). Per filer and quarter it takes the latest original-or-RESTATEMENT filing, adds NEW HOLDINGS amendments filed on or after it (minus rows that just copy the original or an earlier amendment; same-day ties go to the RESTATEMENT, then the later accession number), and drops put/call rows and bond principal (`sh_type = PRN`). Every reader uses it: the signal scorer, filer returns, cost basis, Stocks, and Holdings (through `holdings_recent()`).
+- New view **`holdings_13f_effective`** (migration `023`). Per filer and quarter it takes the latest original-or-RESTATEMENT filing, adds NEW HOLDINGS amendments filed on or after it (minus rows that just copy the original or an earlier amendment; same-day ties go to the RESTATEMENT, then the later accession number). A "NEW HOLDINGS" amendment that repeats at least half of the original's securities (and at least 5) is a mislabelled full re-list and replaces the quarter like a RESTATEMENT, and drops put/call rows and bond principal (`sh_type = PRN`). Every reader uses it: the signal scorer, filer returns, cost basis, Stocks, and Holdings (through `holdings_recent()`).
 - Why: options, bonds and amendments were counted as share purchases. Examples: Oaktree's convertible bonds made SNOW and RIOT look like big buys; Situational Awareness's call options hid MU going from 17k to 4.8M shares; First Eagle's mislabelled amendment doubled its Q2-2026 book.
 - `parse_13f` now stores `sh_type` and the 13F-HR/A amendment type, pages filings in a stable order, leaves an amendment whose type it can't read unparsed (retried next run) instead of letting it replace the quarter, and removes a filing's rows if an insert fails partway. Release step: reparse all 13F filings once (`python -m ingest.parse_13f --reparse`).
 
 ### Form 4: insider fields
 
 - Role flags were wrong on XML filings: SEC writes `"true"` as well as `"1"`, and bulk rows spell `TenPercentOwner` without separators. One parser for both now (`ingest/form4_fields.py`).
-- New columns (migration `024`): `is_10b5_1`, `shares_owned_after`, `direct_indirect`. Release step: one-year bulk backfill (`python -m ingest.form4_universe_bulk --years 1`).
+- New columns (migration `024`): `is_10b5_1`, `shares_owned_after`, `direct_indirect`. Release step: one-year bulk backfill (`python -m ingest.form4_universe_bulk --years 1`). The daily ingester now updates rows it already has instead of skipping them, so each nightly run refreshes its last 7 days; rows from the current quarter older than that are refreshed when SEC publishes the quarter's bulk file (the `dera-refresh` job). Until then some July–September 2026 rows keep the old role flags and empty new fields; no score uses them while the insider filters are off.
 - **Every open-market insider buy still counts** (Vijay's call). Filters for officer/director, 10b5-1 plans, a $ minimum and stake growth exist in `config/signal_weights.yml` `insider_filters`, all switched **off**. This answers the TSM employee-plan question in the entry below: those buys keep counting.
 
 ### Process

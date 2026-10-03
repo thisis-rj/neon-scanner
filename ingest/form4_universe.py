@@ -9,7 +9,8 @@ Strategy:
   - Enumerate Form 4s via EDGAR daily index (one HTTP per day, ~5K filings each)
   - For each filing, fetch the ownership.xml, parse for non-derivative txns
   - Keep only transaction_code = 'P' (open-market purchases)
-  - Idempotent: unique constraint on (accession, reporter, date, code, shares)
+  - Idempotent: unique constraint on (accession, reporter, date, code, shares);
+    re-runs update existing rows with the current parse
 
 Usage:
   python -m ingest.form4_universe              # default: last 60 days
@@ -259,14 +260,19 @@ def parse_form4(xml_bytes: bytes) -> list[dict[str, Any]] | None:
 
 
 def insert_transactions(sb: Client, rows: list[dict[str, Any]]) -> int:
-    """Upsert rows, returning newly-inserted count (existing rows skipped)."""
+    """Upsert rows, returning the count written (new or refreshed).
+
+    Existing rows are updated, not skipped: a re-run then fills fields added
+    later (is_10b5_1, shares_owned_after, direct_indirect) and corrects role
+    flags parsed by older code.
+    """
     if not rows:
         return 0
     try:
         result = sb.table("insider_transactions").upsert(
             rows,
             on_conflict="accession_number,reporter_cik,transaction_date,transaction_code,shares",
-            ignore_duplicates=True,
+            ignore_duplicates=False,
         ).execute()
         return len(result.data) if result.data else 0
     except Exception as e:

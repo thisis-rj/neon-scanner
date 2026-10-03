@@ -125,3 +125,24 @@ def test_bulk_quarter_parses_flags_and_new_fields(tmp_path):
     assert ceo["reporter_name"] == "Jane CEO"  # first owner of a joint filing is kept
     assert ceo["reporter_is_officer"] and ceo["reporter_is_director"] and not ceo["reporter_is_ten_pct"]
     assert ceo["is_10b5_1"] is None and ceo["shares_owned_after"] is None and ceo["direct_indirect"] == "D"
+
+
+# Value: protects=re-running the daily Form 4 ingest refreshes rows already stored (new 10b5-1/shares-after fields, corrected role flags); fails_when=the upsert goes back to ignore_duplicates=True and old rows keep stale values forever; why_new=no test covered insert_transactions; seam=none
+def test_daily_upsert_refreshes_existing_rows():
+    from ingest.form4_universe import insert_transactions
+
+    calls = []
+
+    class _Table:
+        def upsert(self, rows, **kw):
+            calls.append(kw)
+            self.rows = rows
+            return self
+
+        def execute(self):
+            return type("R", (), {"data": self.rows})()
+
+    sb = type("SB", (), {"table": lambda self, name: _Table()})()
+    assert insert_transactions(sb, [{"accession_number": "a", "is_10b5_1": True}]) == 1
+    assert calls == [{"on_conflict": "accession_number,reporter_cik,transaction_date,transaction_code,shares",
+                      "ignore_duplicates": False}]
