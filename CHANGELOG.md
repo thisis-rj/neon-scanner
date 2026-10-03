@@ -2,6 +2,28 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-10-03 — 13F holdings counted correctly; Form 4 fields fixed
+
+Author: Vijay (with Claude). Branch `fix/data-correctness`, rebased onto `040906c`.
+
+### 13F: one rule for "what a fund really holds"
+
+- New view **`holdings_13f_effective`** (migration `023`). Per filer and quarter it takes the latest original-or-RESTATEMENT filing, adds later NEW HOLDINGS amendments (minus rows that just copy the original), and drops put/call rows and bond principal (`sh_type = PRN`). Every reader uses it: the signal scorer, filer returns, cost basis, Stocks, and Holdings (through `holdings_recent()`).
+- Why: options, bonds and amendments were counted as share purchases. Examples: Oaktree's convertible bonds made SNOW and RIOT look like big buys; Situational Awareness's call options hid MU going from 17k to 4.8M shares; First Eagle's mislabelled amendment doubled its Q2-2026 book.
+- `parse_13f` now stores `sh_type` and the 13F-HR/A amendment type. All 13F filings were reparsed once.
+
+### Form 4: insider fields
+
+- Role flags were wrong on XML filings: SEC writes `"true"` as well as `"1"`, and bulk rows spell `TenPercentOwner` without separators. One parser for both now (`ingest/form4_fields.py`).
+- New columns (migration `024`): `is_10b5_1`, `shares_owned_after`, `direct_indirect`. One-year backfill run.
+- **Every open-market insider buy still counts** (Vijay's call). Filters for officer/director, 10b5-1 plans, a $ minimum and stake growth exist in `config/signal_weights.yml` `insider_filters`, all switched **off**. This answers the TSM employee-plan question in the entry below: those buys keep counting.
+
+### Process
+
+- `scripts/deploy.sh` runs `python -m ingest.migrate` before it pushes. **Merging a PR on GitHub skips this**: run the migrate yourself before merging a PR that adds a migration.
+- CI: `tests.yml` runs pytest and the PGlite view tests on every push; the nightly SEC job runs pytest first.
+- Migrations renumbered 019/020 → **023/024**: production already has `019`–`022` from the My Stocks portfolio work, whose files are not on `main` yet. **Riya: please push those four files.**
+
 ## 2026-10-03 — Deploy on push, shadcn/ui redesign, three bug fixes
 
 Authors: Vijay (with Claude), on top of Riya's `7cae894`–`4297ad4` (My Stocks tab, Signals hidden, env templates, README onboarding).
