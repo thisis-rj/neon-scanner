@@ -48,7 +48,7 @@ Live. The daily ingest runs on GitHub Actions and the UI is deployed on Vercel. 
    pip install -r requirements.txt
    python -m ingest.edgar                     # example: poll EDGAR for new filings
    ```
-5. **Deploying** — pushing to `main` deploys to production (Vercel is connected to this repo); any other branch gets a preview URL — check it before merging. Never run `vercel --prod`. `scripts/deploy.sh "message"` commits + pushes and stamps an empty keep-alive commit when nothing changed, because GitHub disables the ingest cron after 60 days with no commits (see `CLAUDE.md` §10 and `DEPLOY.md`).
+5. **Deploying** — pushing to `main` deploys to production (Vercel is connected to this repo); any other branch gets a preview URL — check it before merging. Never run `vercel --prod`. `scripts/deploy.sh "message"` commits + pushes and stamps an empty keep-alive commit when nothing changed, because GitHub disables the ingest cron after 60 days with no commits (see `CLAUDE.md` §10 and `DEPLOY.md`). On `main` it applies pending schema migrations to production before pushing (needs `SUPABASE_PAT`); merging a PR on GitHub skips that, so apply a PR's migrations before merging it.
 
 ## Where things live
 
@@ -59,9 +59,12 @@ Live. The daily ingest runs on GitHub Actions and the UI is deployed on Vercel. 
 | `web/components/ui/` | shadcn/ui components (generated, then owned by us) |
 | `web/components/app/` | shared Neon pieces — `PageHeader`, `TableCard`, cells, `SiteHeader` |
 | `web/components/`, `web/lib/` | page-specific components + helpers (`lib/format.ts` = number formatting) |
-| `schema/migrations/` | numbered SQL, auto-applied by `ingest/migrate.py` |
+| `schema/migrations/` | numbered SQL, applied by `ingest/migrate.py` (nightly job, and `scripts/deploy.sh` on `main`) |
+| `tests/` | pytest parser/scorer tests with SEC fixtures (`python -m pytest -q`); `tests/sql/` = holdings view/RPC tests in PGlite (`cd tests/sql && npm ci && node --test`). CI: `.github/workflows/tests.yml` |
 | `config/tracked_filers.yml` | the watched filer universe |
 | `.github/workflows/daily-ingest.yml` | the scheduled pipeline |
 | `CLAUDE.md` | architecture + non-negotiable design rules — read before coding |
 | `web/AGENTS.md` | UI rules (shadcn/ui, colors, page recipe) — read before building UI |
 | `CHANGELOG.md` | what changed recently + known open issues |
+| `TODOS.md` | deferred work (scoring backtest, CLAUDE.md vs scorer drift) |
+| `DEPLOY.md` | GitHub Actions + Vercel setup, how deploys and migrations work |

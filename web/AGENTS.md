@@ -56,9 +56,10 @@ export default async function ThingPage() {
 - Data fetching stays in **server components**. Interactive bits are small `"use client"` components (see `FilerCardTabs`, `TierFilter`, `WatchlistToggle`).
 - `components/ui/table.tsx` is deliberately **not** `"use client"` — big tables would ship every cell to the browser. Keep it that way.
 - Product rules from `/CLAUDE.md` §2 apply to UI: no trending / sorted-by-return surfaces (§2.2); sells/exits as prominent as buys (§2.3); a score always shows its components (§2.4); signal empty states say "this is normal" (§2.5); `ThirteenFDelayNote` wherever 13F data appears (§2.6).
+- 13F holdings: read `holdings_13f_effective` (or the `holdings_recent()` RPC), never `holdings_13f` directly; the raw table still has options, bond principal and amendment duplicates (`/CLAUDE.md` §6.1).
 - Hidden route = `page.tsx.disabled` (e.g. Signals). It is **not type-checked** while hidden; run `npx tsc --noEmit` after re-enabling.
 - Check before pushing: `npx tsc --noEmit` and `npm run build`. Run locally with `web/.env.local` (see `web/.env.local.example`).
 
 ## Shipping
 
-Push a branch → Vercel builds a **preview URL** (shown on the commit / PR in GitHub). Look at it, then merge to `main` → **production**. Never `vercel --prod`.
+Push a branch → Vercel builds a **preview URL** (shown on the commit / PR in GitHub). Look at it, then merge to `main` → **production**. Never `vercel --prod`. If the branch adds a schema migration, apply it to production before merging: merging on GitHub doesn't migrate (see `/DEPLOY.md`).

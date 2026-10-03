@@ -108,9 +108,10 @@ There will be weeks where nothing surfaces. That is correct behavior. Do not add
 - `tracked_filers` — the universe of 13F/13D filers we watch (CIK, name, category, multiplier).
 - `filings_raw` — every fetched filing, deduped by accession number. Source of truth.
 - `holdings_13f` — flattened per-position rows from 13F-HR/A filings, as reported (includes options and bond principal).
-- `holdings_13f_effective` (view) — the rows every reader uses: a filer's actual long-equity holdings per quarter (§6.1).
+- `holdings_13f_effective` (materialized view; the rule itself is the view `holdings_13f_effective_live`) — the rows every reader uses: a filer's actual long-equity holdings per quarter. Refreshed by `refresh_holdings_effective()` (§6.1).
 - `events_13d` — 13D/G filings parsed for activist stake disclosures.
 - `events_form4` — insider transactions.
+- `insider_transactions` — universe-wide Form 4 open-market buys the scorer reads for insider clusters (§6.3), with `is_10b5_1`, `shares_owned_after`, `direct_indirect` (migration 024).
 - `tickers` — the investable universe with the latest snapshot of price + return windows.
 - `signals` — emitted entry signals with score breakdown stored as JSONB.
 - `exit_signals` — emitted exit signals against user positions.
@@ -152,7 +153,7 @@ If a future maintainer wants to add or remove a filer, the test is:
 ### 6.3 Form 4 (insider transactions)
 - Open-market buys (code P). Sales ignored.
 - Every insider with an open-market buy of the ticker in the 30-day window counts toward the cluster. `insider_filters` in `config/signal_weights.yml` can narrow this (officer or director; not a Rule 10b5-1 plan buy; minimum total $; minimum stake growth), but all four are switched off by the user's choice. Do not switch them back on without asking.
-- When a filter is on, buys are judged per insider, not per row; unknown inputs never exclude anyone; excluded insiders are stored in `components.insider_cluster.excluded` with the reason and shown on /signals (§2.4).
+- When a filter is on, buys are judged per insider, not per row; unknown inputs never exclude anyone; excluded insiders are stored in `components.insider_cluster.excluded` with the reason and shown on /signals (§2.4; that page is hidden for now as `web/app/signals/page.tsx.disabled`).
 - Cluster scoring: 1 / 2 / 3+ qualifying insiders → 1.5 / 3.5 / 7.0 (+1 each beyond 3).
 - SEC spells flags several ways ("1"/"true", "TenPercentOwner"); parse them with `ingest/form4_fields.py`, never with ad-hoc string checks.
 
@@ -271,4 +272,4 @@ These strings live in the UI, not just this doc.
 - Commits: small, focused, conventional-commits style. One logical change per commit.
 - Building UI: follow [web/AGENTS.md](web/AGENTS.md) — shadcn/ui components, semantic color tokens, never raw Tailwind palette colors.
 - Recent changes and known open issues: [CHANGELOG.md](CHANGELOG.md). Add an entry when you change behavior others rely on.
-- **Deploying = pushing to `main`.** The Vercel project is connected to this repo (root directory `web`): every push to `main` deploys to production, every other branch gets a preview URL. NEVER run `vercel --prod` by hand — production must always be what is on `main`. `scripts/deploy.sh "msg"` commits + pushes (and stamps an empty keep-alive commit when nothing changed). Why commits matter beyond deploys: GitHub auto-disables the `daily-ingest` scheduled workflow after 60 days with no commits (this stalled ingestion for 2 weeks once — last commit 2026-06-02 → cron disabled ~2026-08-02). If the cron ever shows `disabled_inactivity` (`gh workflow list --all`), it needs a manual re-enable in the GitHub UI by a repo admin.
+- **Deploying = pushing to `main`.** The Vercel project is connected to this repo (root directory `web`): every push to `main` deploys to production, every other branch gets a preview URL. NEVER run `vercel --prod` by hand — production must always be what is on `main`. `scripts/deploy.sh "msg"` commits + pushes (and stamps an empty keep-alive commit when nothing changed). On `main` it first applies pending migrations to production (`python -m ingest.migrate`, needs `SUPABASE_PAT` in `.env`) and refuses to run if `schema/migrations` has uncommitted changes; on other branches it skips migrations. Merging a PR on GitHub skips this script, so apply a PR's migrations before merging it. Why commits matter beyond deploys: GitHub auto-disables the `daily-ingest` scheduled workflow after 60 days with no commits (this stalled ingestion for 2 weeks once — last commit 2026-06-02 → cron disabled ~2026-08-02). If the cron ever shows `disabled_inactivity` (`gh workflow list --all`), it needs a manual re-enable in the GitHub UI by a repo admin.

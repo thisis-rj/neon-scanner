@@ -67,4 +67,4 @@ Same data, same queries. Only presentation changed. **New UI must follow [`web/A
 - **Possible employee-plan noise in insider clusters.** Example: TSM showed "30 insiders" each buying 32–56 shares at the identical price on one day (~$122K total). That looks like a share plan, not discretionary buying (a guess), and it inflates TSM's signal score. Any filter would change scoring, so it needs a decision.
 - **Holdings takes ~18 s to load** (production build, before and after the redesign): Supabase fetches dominate.
 - **Railway GitHub app** was installed on the old repo. Its purpose and whether anything live depended on it are unknown.
-- **Pending on branch `fix/data-correctness`:** 13F data-correctness and insider filters, with schema migrations 019/020. Not merged. Its pages need migrations applied *before* deploy, and with push-to-deploy that ordering rule still has to be settled.
+- ~~**Pending on branch `fix/data-correctness`:** 13F data-correctness and insider filters, with schema migrations 019/020.~~ Shipped in the entry above: migrations renumbered 023–026, and `scripts/deploy.sh` migrates before pushing.
