@@ -1,7 +1,8 @@
 name: Tests
 
-# Parser fixture tests + scorer unit tests (pytest) and the holdings view /
-# RPC tests (Postgres in PGlite). No secrets, no network beyond installs.
+# Parser fixture tests + scorer unit tests (pytest), the holdings view /
+# fund_flows SQL tests (Postgres in PGlite), and the /funds TypeScript rules.
+# No secrets, no network beyond installs.
 
 on:
   push:
@@ -37,3 +38,15 @@ jobs:
           cache-dependency-path: tests/sql/package-lock.json
       - run: npm ci
       - run: node --test
+
+  web-rules:
+    # Pure TypeScript rules for /funds (label, filters, sort, rollup), run
+    # straight from web/lib with Node's type stripping — no build, no deps.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test --experimental-strip-types tests/web/*.test.mjs

@@ -18,6 +18,7 @@ import {
 const NAV = [
   { href: "/", label: "Filings" },
   { href: "/holdings", label: "Holdings" },
+  { href: "/funds", label: "Funds" },
   { href: "/events", label: "Clusters" },
   { href: "/corporate", label: "Corporate events" },
   { href: "/earnings", label: "Earnings" },
