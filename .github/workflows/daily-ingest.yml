@@ -88,6 +88,11 @@ jobs:
           cache-dependency-path: requirements.txt
       - run: pip install -r requirements.txt
 
+      - name: Parser and scorer tests
+        # A broken parser must not write rows. Same suite as tests.yml.
+        run: python -m pytest -q
+        continue-on-error: false
+
       - name: Apply pending migrations
         # Runs BEFORE every other ingest step so new columns/tables exist by the
         # time parsers try to write to them. Idempotent — uses CREATE IF NOT EXISTS.
