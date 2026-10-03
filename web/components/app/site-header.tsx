@@ -19,8 +19,8 @@ const NAV = [
   { href: "/holdings", label: "Holdings" },
   { href: "/events", label: "Clusters" },
   { href: "/corporate", label: "Corporate events" },
-  { href: "/signals", label: "Signals" },
   { href: "/earnings", label: "Earnings" },
+  { href: "/my-stocks", label: "My Stocks" },
 ] as const;
 
 function isActive(pathname: string, href: string) {
