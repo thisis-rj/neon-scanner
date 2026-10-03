@@ -50,7 +50,7 @@ with thirteenf as (
     and exists (select 1 from holdings_13f h where h.filing_id = f.id)
 ),
 base0 as (
-  select distinct on (cik, period_of_report) id, cik, period_of_report
+  select distinct on (cik, period_of_report) id, cik, period_of_report, filed_at
   from thirteenf
   where kind in ('ORIGINAL', 'RESTATEMENT')
   order by cik, period_of_report, filed_at desc, (kind = 'RESTATEMENT') desc,
@@ -90,10 +90,12 @@ effective_filings as (
   union all
   select n.id, n.cik, n.period_of_report, n.filed_at, n.accession_number, false as is_base
   from classified n
-  left join base b on b.cik = n.cik and b.period_of_report = n.period_of_report
+  left join base0 b on b.cik = n.cik and b.period_of_report = n.period_of_report
   where n.kind = 'NEW HOLDINGS'
     -- >= because filed_at is a date: a same-day NEW HOLDINGS still counts;
-    -- the copy check below drops any rows that repeat the base.
+    -- the copy check below drops any rows that repeat the base. Compared with
+    -- the latest declared original/RESTATEMENT (base0), so a re-list filed
+    -- later doesn't push out an earlier genuine NEW HOLDINGS amendment.
     and (b.id is null or n.filed_at >= b.filed_at)
 )
 select h.*

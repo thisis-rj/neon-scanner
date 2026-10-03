@@ -100,7 +100,7 @@ def expected_filings(filings, raw_rows):
         bases = sorted((f for f in fs if kind(f) != "NEW HOLDINGS"), key=lambda f: order(f, kind))
         base = bases[-1] if bases else None
         extras = [f["id"] for f in sorted(fs, key=lambda f: (f["filed_at"][:10], f.get("accession_number") or ""))
-                  if kind(f) == "NEW HOLDINGS" and (base is None or f["filed_at"][:10] >= base["filed_at"][:10])]
+                  if kind(f) == "NEW HOLDINGS" and (b0 is None or f["filed_at"][:10] >= b0["filed_at"][:10])]
         out[q] = (base["id"] if base else None, extras)
     return out
 
@@ -146,6 +146,10 @@ def check(filings, raw, eff) -> int:
 
     print(f"NEW HOLDINGS rows that only copied an earlier filing (not counted): {copied_total}")
     untyped = [f for f in filings if f["form_type"] == "13F-HR/A" and not f.get("amendment_type")]
+    unreadable = [f["accession_number"] for f in filings if f.get("amendment_type") == "UNREADABLE"]
+    if unreadable:
+        print(f"WARN {len(unreadable)} amendments have an unreadable type and are kept out of the view"
+              f" (set filings_raw.amendment_type by hand if SEC never serves it): {', '.join(unreadable)}")
     amend = [f for f in filings if f["form_type"] == "13F-HR/A"]
     print(f"13F-HR/A filings: {len(amend)} ({Counter(f.get('amendment_type') for f in amend)})")
     if untyped:

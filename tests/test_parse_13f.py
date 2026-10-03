@@ -120,10 +120,11 @@ def test_parse_one_filing_records_amendment_type_only_when_read(monkeypatch, for
 
     unreadable_amendment = form == "13F-HR/A" and stored is None
     if unreadable_amendment:
-        # Left unparsed and untouched (retried next run): an untyped amendment would count as a
-        # RESTATEMENT and could replace the whole quarter.
-        assert p13f.parse_one_filing(filing) == (0, "amendment type unreadable; left unparsed, will retry")
-        assert sb.ops == []
+        # Kept out of the view (old rows removed, retried next run) and marked UNREADABLE:
+        # an untyped amendment would count as a RESTATEMENT and could replace the whole quarter.
+        assert p13f.parse_one_filing(filing) == (0, p13f.UNREADABLE_ERROR)
+        assert [(o["table"], o["op"], o.get("values")) for o in sb.ops] == [
+            ("holdings_13f", "delete", None), ("filings_raw", "update", {"amendment_type": "UNREADABLE"})]
         return
     assert p13f.parse_one_filing(filing) == (6, None)
 

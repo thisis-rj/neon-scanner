@@ -209,11 +209,13 @@ def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
         return 0, "info table empty or unparseable"
 
     sb = _supabase()
-    # An amendment whose type we can't read stays unparsed (retried next run):
-    # the view would treat it as a RESTATEMENT, and a 4-row NEW HOLDINGS
-    # amendment would then replace a 110-row quarter.
+    # An amendment whose type we can't read is kept out of the view (no rows;
+    # retried next run) and marked UNREADABLE so it can be listed: counted as a
+    # RESTATEMENT, a 4-row NEW HOLDINGS amendment would replace a 110-row quarter.
     if filing.get("form_type") == "13F-HR/A" and not record_amendment_type(sb, filing, base, xmls or []):
-        return 0, "amendment type unreadable; left unparsed, will retry"
+        sb.table("holdings_13f").delete().eq("filing_id", filing["id"]).execute()
+        sb.table("filings_raw").update({"amendment_type": UNREADABLE}).eq("id", filing["id"]).execute()
+        return 0, UNREADABLE_ERROR
 
     # Idempotent: delete existing rows for this filing, then insert fresh.
     sb.table("holdings_13f").delete().eq("filing_id", filing["id"]).execute()
@@ -244,6 +246,10 @@ def parse_one_filing(filing: dict[str, Any]) -> tuple[int, str | None]:
         raise
 
     return len(rows_to_insert), None
+
+
+UNREADABLE = "UNREADABLE"
+UNREADABLE_ERROR = "amendment type unreadable; kept out of holdings, will retry"
 
 
 def record_amendment_type(sb: Client, filing: dict[str, Any], base: str, xmls: list[str]) -> bool:
@@ -342,6 +348,10 @@ def main() -> None:
     print(f"Filings parsed : {len(pending) - len(errors)}/{len(pending)}")
     print(f"Holdings rows  : {total_rows:,}")
     print(f"Errors         : {len(errors)}")
+    unreadable = [acc for acc, err in errors if err == UNREADABLE_ERROR]
+    if unreadable:
+        # Not retried successfully until SEC's cover page reads; set filings_raw.amendment_type by hand if it never does.
+        print(f"Amendments with unreadable type (kept out of holdings): {len(unreadable)}: {', '.join(unreadable)}")
     if errors:
         print(f"\nFirst few errors:")
         for acc, err in errors[:10]:

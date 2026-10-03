@@ -259,3 +259,17 @@ test("NEW HOLDINGS sharing one security with a large base stays additive (Berksh
   assert.equal(got.length, 12);
   assert.ok(got.includes("B1@n:999") && got.includes("B1@o:100") && got.includes("C3@n:100"));
 });
+
+// Value: protects=a genuine NEW HOLDINGS filed before a later mislabelled re-list keeps its confidential positions; fails_when=amendments are compared with the reclassified re-list instead of the declared original; why_new=re-list tests have no earlier NEW HOLDINGS; seam=none
+test("a re-list filed after a genuine NEW HOLDINGS doesn't drop that amendment's positions", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2026-08-05" });
+  await rows(pg, "o", [{ t: "A1" }, { t: "A2" }, { t: "A3" }, { t: "A4" }, { t: "A5" }, { t: "A6" }]);
+  await filing(pg, { id: "nh1", filed: "2026-08-10", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "nh1", [{ t: "SECRET", sh: 9 }]);
+  await filing(pg, { id: "relist", filed: "2026-08-20", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "relist", [{ t: "A1" }, { t: "A2" }, { t: "A3" }, { t: "A4" }, { t: "A5" }, { t: "A6" }, { t: "NEW1", sh: 7 }]);
+  assert.deepEqual(await effective(pg), [
+    "A1@relist:100", "A2@relist:100", "A3@relist:100", "A4@relist:100", "A5@relist:100", "A6@relist:100",
+    "NEW1@relist:7", "SECRET@nh1:9"]);
+});
