@@ -67,6 +67,7 @@ run_step "Summarize 8-K"        "$PYTHON" -m ingest.summarize_8k
 # ─── Prices + signals ────────────────────────────────────────────────────
 run_step "Prices"               "$PYTHON" -m ingest.prices
 run_step "Compute buy signals"  "$PYTHON" -m ingest.compute_buy_signals
+run_step "Compute fund flows"   "$PYTHON" -m ingest.compute_fund_flows
 
 # ─── ETF flows pipeline (original) ───────────────────────────────────────
 run_step "Yahoo AUM"            "$PYTHON" -m ingest.etf_aum_yahoo

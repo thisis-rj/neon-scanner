@@ -152,6 +152,13 @@ jobs:
         run: python -m ingest.cusip_resolver
         continue-on-error: true
 
+      - name: Compute fund flows (fund_position_changes — read source for /funds)
+        # After cusip_resolver so both quarters of each fund resolve tickers
+        # through the same, freshest CUSIP map. Industry/sector come from the
+        # prices job (yesterday's run at worst). Fast: no network beyond Supabase.
+        run: python -m ingest.compute_fund_flows
+        continue-on-error: true
+
       - name: Estimate per-(filer, ticker) cost basis via per-quarter VWAP proxy
         # Runs after compute_buy_signals so the latest holdings are reflected.
         # VWAPs are cached permanently per (ticker, quarter) so daily incremental
