@@ -208,3 +208,84 @@ def test_compute_signals_shows_excluded_insiders_in_components():
     assert big["components"]["insider_cluster"] == {
         "n": 2, "score": 3.5, "excluded": [{"name": "Insider 2", "reason": "10b5_1_plan"}]}
     assert big["contributing_filers"]["insider_buyers"] == ["Insider 0", "Insider 1"]
+
+
+# ─── Production config: insider filters switched off (user, 2026-10-03) ──
+# Value: protects=user decision that every open-market insider buy counts with the shipped signal_weights.yml; fails_when=a filter is flipped on in config, or 0/false values start acting as active filters; why_new=filter tests pass explicit FILTERS dicts, never the shipped config; seam=none
+def test_shipped_config_counts_every_open_market_buy():
+    from pathlib import Path
+
+    import yaml
+
+    cfg_path = Path(__file__).resolve().parent.parent / "config" / "signal_weights.yml"
+    # Same load as compute_buy_signals.main().
+    filters = (yaml.safe_load(cfg_path.read_text()) or {}).get("insider_filters") or {}
+
+    def row(cik, name, **kw):
+        return {"issuer_ticker": "XYZ", "transaction_date": "2026-09-20", "filed_at": "2026-09-22T00:00:00",
+                **buy(reporter_cik=cik, reporter_name=name, **kw)}
+    rows = [row("1", "Big Fund", reporter_is_officer=False),                 # pure 10% holder
+            row("2", "Plan Buyer", is_10b5_1=True),                          # Rule 10b5-1 plan buy
+            row("3", "Token Buyer", value_usd=500),                          # $500 buy
+            row("4", "Tiny Add", shares=10, shares_owned_after=1_000_010)]   # +0.001% stake
+    cluster, _, meta, excluded = insider_clusters(rows, "2026-09-03", "2026-10-03", filters)
+    assert cluster["XYZ"] == {"1", "2", "3", "4"}
+    assert not excluded
+    assert [m["name"] for m in meta["XYZ"]] == ["Big Fund", "Plan Buyer", "Token Buyer", "Tiny Add"]
+
+
+# ─── Activist 13D (×5, the highest-weight input) ─────────────────────────
+# Value: protects=only initial 13Ds from tracked filers filed inside the 90-day window score, incl. issuer-name ticker fallback; fails_when=13D/A or 13G starts counting, window bounds shift, untracked filers count, or name fallback breaks; why_new=no test passes any events_13d rows; seam=none
+from ingest.scoring_rules import activist_13d, cik10  # noqa: E402
+
+
+@pytest.mark.parametrize("override,filed,counted", [
+    ({}, "2026-09-01", True),
+    ({"form_subtype": "13D"}, "2026-09-01", True),
+    ({"form_subtype": "SCHEDULE 13D/A"}, "2026-09-01", False),     # amendment, not an initial stake
+    ({"form_subtype": "SCHEDULE 13G"}, "2026-09-01", False),       # passive stake
+    ({}, "2026-07-05", True),                                       # first day of the window
+    ({}, "2026-07-04", False),                                      # one day before it
+    ({}, "2026-10-03", True),                                       # as-of day
+    ({}, "2026-10-04", False),                                      # filed after as-of
+    ({"cik": "999"}, "2026-09-01", False),                          # untracked filer
+    ({"ticker": None, "issuer_name": "Acme Holdings, Inc."}, "2026-09-01", True),  # name fallback
+    ({"ticker": None, "issuer_name": "Unknown Co"}, "2026-09-01", False),
+    ({"filing_id": "missing"}, None, False),                        # filing not in filings_raw
+])
+def test_activist_13d_window_subtype_and_filer(override, filed, counted):
+    r = {"ticker": "ACME", "cik": "1", "form_subtype": "SCHEDULE 13D", "filing_id": "d1",
+         "issuer_name": "ACME", **override}
+    filed_at = {"d1": filed} if filed else {}
+    act, dates = activist_13d([r], filed_at, {"ACME": "ACME"}, {cik10("1"): 1.5}, "2026-07-05", "2026-10-03")
+    assert dict(act) == ({"ACME": [(cik10("1"), 1.5)]} if counted else {})
+    assert dict(dates) == ({"ACME": {filed}} if counted else {})
+
+
+# ─── Cross-quarter confluence + multi-source bonus ───────────────────────
+# Value: protects=≥3 filers initiating in latest/prior quarter score Σmult×1.5, 3 source types add +5, late or untracked 13Fs ignored; fails_when=iq1/iq2 union miscounts, a ≥3 threshold shifts, or 13Fs filed after as-of / by untracked filers count; why_new=no test asserts cross_q_confluence or an applied multi_source_bonus; seam=none
+def test_cross_quarter_confluence_and_multi_source_bonus():
+    filers = [{"name": f"Fund {i}", "cik": str(i), "multiplier": 1.0, "tier": "B"} for i in (1, 2, 3, 4)]
+    universe = [{"ticker": "XYZ", "name": "Xyz Corp", "market_cap_usd": 5e9}]
+    filings = [
+        _filing("f1", "1", "2026-06-30", "2026-08-14"),
+        _filing("f2", "2", "2026-06-30", "2026-08-14"),
+        _filing("f3a", "3", "2026-03-31", "2026-05-15"),  # Fund 3 initiated a quarter earlier
+        _filing("f3b", "3", "2026-06-30", "2026-08-14"),
+        _filing("f4", "4", "2026-06-30", "2026-10-10"),   # filed after as-of: not known yet
+        _filing("fu", "99", "2026-06-30", "2026-08-14"),  # untracked filer
+    ]
+    holdings = [{"filing_id": f, "ticker": "XYZ", "shares": 100, "issuer_name": "XYZ CORP"}
+                for f in ("f1", "f2", "f3a", "f3b", "f4", "fu")]
+    holdings.append({"filing_id": "f3a", "ticker": "OLD", "shares": 5, "issuer_name": "OLD CO"})  # exited in Q2
+    insiders = [{"issuer_ticker": "XYZ", "reporter_cik": str(i), "reporter_name": f"Insider {i}",
+                 "transaction_date": "2026-09-20", "filed_at": "2026-09-22T00:00:00", "value_usd": 50_000}
+                for i in range(2)]
+    [xyz] = compute_signals(AS_OF, filers, universe, filings, holdings, insiders, [])
+    c = xyz["components"]
+    assert c["thirteenf_new"] == {"n": 2, "score": 4.0}           # Funds 1 and 2; Fund 3 held flat
+    assert c["thirteenf_add"]["n"] == 0
+    assert c["cross_q_confluence"] == {"n": 3, "score": 4.5}      # Funds 1, 2 (latest) ∪ Fund 3 (prior)
+    assert c["multi_source_bonus"] == {"applied": True, "n_types": 3, "score": 5.0}
+    assert xyz["score"] == 3.5 + 4.0 + 4.5 + 5.0 and xyz["num_sources"] == 3
+    assert xyz["contributing_filers"]["new"] == ["Fund 1", "Fund 2"]
