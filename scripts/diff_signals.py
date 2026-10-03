@@ -15,6 +15,12 @@ exact, deterministic diff, with no writes to production.
   # 3. Compare. Exit code 1 if anything differs.
   python scripts/diff_signals.py compare /tmp/old.json /tmp/new.json
 
+  # 3b. With --snapshot, each changed ticker is attributed to the causes the
+  #     eng-review plan expects (options, bond principal, 13F amendments,
+  #     insider buys in the window).
+  #     Exit code 1 only if some change has no cause (UNATTRIBUTED).
+  python scripts/diff_signals.py compare /tmp/old.json /tmp/new.json --snapshot /tmp/post.json.gz
+
 Replay swaps in a fake Supabase client (serves the snapshot, records the
 upsert instead of sending it), disables yfinance price enrichment, and pins
 "today" to the snapshot date. The snapshot holds public SEC data only; keep
@@ -43,7 +49,7 @@ SNAPSHOT_TABLES = {
     "tickers": "*",
     "filings_raw": "id,cik,form_type,filed_at,period_of_report,amendment_type",
     "holdings_13f": "filing_id,cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd,put_call,sh_type",
-    "holdings_13f_effective": "filing_id,cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd",
+    "holdings_13f_effective": "filing_id,cik,period_of_report,cusip,ticker,issuer_name,shares,value_usd,put_call,sh_type",
     "insider_transactions": "*",
     "events_13d": "ticker,cik,form_subtype,filing_id,issuer_name",
 }
@@ -205,21 +211,78 @@ def _run(snapshot_path: str, out_path: str) -> int:
 
 # ─── compare ────────────────────────────────────────────────────────────
 
+def causes_by_ticker(snap: dict) -> dict[str, set[str]]:
+    """ticker → which planned changes touch it: 'options', 'bonds', 'amendment', 'insiders'.
+
+    'insiders' = the ticker has insider buys in the scorer's 30-day window, so
+    the insider filters (or corrected role flags) can move it.
+
+    Tickers are resolved the way the scorer does (row ticker, else issuer-name
+    match against the universe). 'amendment' = a row from a 13F-HR/A, or a
+    share row the view dropped because a later filing superseded its filing.
+    """
+    sys.path.insert(0, str(REPO))
+    from ingest.scoring_rules import nm
+
+    t = snap["tables"]
+    name_to_ticker = {nm(u.get("name", "")): u["ticker"] for u in t["tickers"]}
+    form = {f["id"]: f["form_type"] for f in t["filings_raw"]}
+    effective_filings = {r["filing_id"] for r in t.get("holdings_13f_effective", [])}
+    causes: dict[str, set[str]] = {}
+    for r in t["holdings_13f"]:
+        tk = r.get("ticker") or name_to_ticker.get(nm(r.get("issuer_name", "")))
+        if not tk:
+            continue
+        c = causes.setdefault(tk, set())
+        if r.get("put_call"):
+            c.add("options")
+        elif r.get("sh_type") == "PRN":
+            c.add("bonds")
+        elif form.get(r["filing_id"]) == "13F-HR/A" or r["filing_id"] not in effective_filings:
+            c.add("amendment")
+    from datetime import timedelta
+    as_of = date.fromisoformat(snap["as_of"])
+    start, end = (as_of - timedelta(days=30)).isoformat(), as_of.isoformat()
+    for r in t.get("insider_transactions", []):
+        if r.get("issuer_ticker") and start <= (r.get("transaction_date") or "") <= end:
+            causes.setdefault(r["issuer_ticker"], set()).add("insiders")
+    return causes
+
+
 def cmd_compare(args) -> int:
     a = json.loads(Path(args.before).read_text())["signals"]
     b = json.loads(Path(args.after).read_text())["signals"]
     removed = sorted(set(a) - set(b))
     added = sorted(set(b) - set(a))
     changed = sorted(t for t in set(a) & set(b) if a[t] != b[t])
+    causes = None
+    if args.snapshot:
+        with gzip.open(args.snapshot, "rt") as f:
+            causes = causes_by_ticker(json.load(f))
+
+    def why(t):
+        if causes is None:
+            return ""
+        c = sorted(causes.get(t, set()))
+        return f"  [{', '.join(c)}]" if c else "  [UNATTRIBUTED]"
+
     print(f"before={len(a)} after={len(b)} | added={len(added)} removed={len(removed)} changed={len(changed)}")
     for t in removed:
-        print(f"  - {t:8s} score {a[t]['score']}")
+        print(f"  - {t:8s} score {a[t]['score']}{why(t)}")
     for t in added:
-        print(f"  + {t:8s} score {b[t]['score']}")
+        print(f"  + {t:8s} score {b[t]['score']}{why(t)}")
     for t in changed:
         diffs = [k for k in sorted(set(a[t]) | set(b[t])) if a[t].get(k) != b[t].get(k)]
-        print(f"  ~ {t:8s} score {a[t]['score']} → {b[t]['score']}  fields: {', '.join(diffs)}")
-    return 1 if (removed or added or changed) else 0
+        print(f"  ~ {t:8s} score {a[t]['score']} → {b[t]['score']}  fields: {', '.join(diffs)}{why(t)}")
+    touched = removed + added + changed
+    if causes is not None:
+        tally: dict[str, int] = {}
+        for t in touched:
+            for c in causes.get(t) or {"UNATTRIBUTED"}:
+                tally[c] = tally.get(c, 0) + 1
+        print("causes: " + ", ".join(f"{k}={v}" for k, v in sorted(tally.items())))
+        return 1 if tally.get("UNATTRIBUTED") else 0
+    return 1 if touched else 0
 
 
 def main() -> int:
@@ -229,7 +292,7 @@ def main() -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("snapshot"); s.add_argument("--out", required=True)
     r = sub.add_parser("replay"); r.add_argument("snapshot"); r.add_argument("--ref", default="WORKTREE"); r.add_argument("--out", required=True)
-    c = sub.add_parser("compare"); c.add_argument("before"); c.add_argument("after")
+    c = sub.add_parser("compare"); c.add_argument("before"); c.add_argument("after"); c.add_argument("--snapshot")
     args = p.parse_args()
     return {"snapshot": cmd_snapshot, "replay": cmd_replay, "compare": cmd_compare}[args.cmd](args)
 
