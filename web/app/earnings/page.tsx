@@ -1,4 +1,18 @@
+import { Fragment } from "react";
 import { supabaseServer } from "@/lib/supabase";
+import { PageHeader } from "@/components/app/page-header";
+import { TableCard } from "@/components/app/table-card";
+import { Pct, Ticker } from "@/components/app/cells";
+import { Badge } from "@/components/ui/badge";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
 
@@ -33,17 +47,6 @@ async function fetchRows(): Promise<Row[]> {
   return out;
 }
 
-function Pct({ v }: { v: number | null }) {
-  if (v == null) return <span className="text-neutral-600">—</span>;
-  const cls = v >= 0 ? "text-emerald-300" : "text-rose-300";
-  return (
-    <span className={`tabular-nums ${cls}`}>
-      {v >= 0 ? "+" : ""}
-      {(v * 100).toFixed(1)}%
-    </span>
-  );
-}
-
 function fmtDate(iso: string): string {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-US", {
     month: "short",
@@ -60,77 +63,95 @@ function daysUntil(iso: string): string {
   return `in ${Math.round(d / 7)}w`;
 }
 
+// Group consecutive rows by report date so the list reads like a calendar.
+function groupByDate(rows: Row[]): [string, Row[]][] {
+  const out: [string, Row[]][] = [];
+  for (const r of rows) {
+    const last = out[out.length - 1];
+    if (last && last[0] === r.next_earnings) last[1].push(r);
+    else out.push([r.next_earnings!, [r]]);
+  }
+  return out;
+}
+
 export default async function EarningsPage() {
   const rows = await fetchRows();
   const today = new Date().toISOString().slice(0, 10);
   const upcoming = rows
     .filter((r) => r.next_earnings && r.next_earnings >= today)
     .sort((a, b) => a.next_earnings!.localeCompare(b.next_earnings!));
+  const days = groupByDate(upcoming);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Earnings</h1>
-        <p className="mt-2 text-sm text-neutral-400 max-w-3xl">
-          Upcoming earnings dates for large-caps (&gt; $10B) and every stock your tracked filers
-          hold, soonest first. The 1-week / 1-month columns are trailing return context —
-          the list is sorted by date, not performance. <span className="text-amber-300/80">SM</span> =
-          held by a tracked filer.
-        </p>
-        <p className="mt-2 text-xs text-neutral-500">
-          Dates are Yahoo&rsquo;s estimates and can shift a day or two until confirmed.{" "}
-          <span className="text-neutral-400">{upcoming.length}</span> upcoming.
-        </p>
-      </header>
+    <div className="flex flex-col gap-8">
+      <PageHeader
+        title="Earnings"
+        description="Upcoming report dates for large caps (> $10B) and every stock a tracked filer holds, soonest first. Trailing returns are context only — the list is ordered by date, never by performance."
+        meta={
+          <>
+            <span>
+              <span className="font-medium text-foreground tabular-nums">{upcoming.length}</span> upcoming
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Badge variant="warning" className="h-4 rounded-sm px-1 text-[10px]">SM</Badge>
+              held by a tracked filer
+            </span>
+            <span>Dates are Yahoo estimates and can shift a day or two until confirmed.</span>
+          </>
+        }
+      />
 
-      {upcoming.length === 0 ? (
-        <p className="text-sm text-neutral-500">
-          No earnings loaded yet — the ingester is still populating. Refresh in a few minutes.
-        </p>
-      ) : (
-        <div className="rounded-md border border-neutral-800">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
-              <tr>
-                <th className="px-3 py-2 font-medium">Stock</th>
-                <th className="px-3 py-2 font-medium">Next earnings</th>
-                <th className="px-3 py-2 font-medium text-right">1W return</th>
-                <th className="px-3 py-2 font-medium text-right">1M return</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-800">
-              {upcoming.map((r) => (
-                <tr key={r.ticker} className="hover:bg-neutral-900/50">
-                  <td className="px-3 py-2 align-top">
-                    <span className="font-mono text-neutral-100">{r.ticker}</span>
-                    {r.in_smart_money && (
-                      <span
-                        className="ml-2 text-[10px] uppercase tracking-wide text-amber-300/80"
-                        title="Held by a tracked filer"
-                      >
-                        SM
+      <TableCard title="Calendar">
+        {upcoming.length === 0 ? (
+          <Empty className="py-16">
+            <EmptyHeader>
+              <EmptyTitle>No upcoming earnings loaded</EmptyTitle>
+              <EmptyDescription>The ingester may still be populating — refresh in a few minutes.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="pl-6">Stock</TableHead>
+                <TableHead className="text-right">1W return</TableHead>
+                <TableHead className="pr-6 text-right">1M return</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {days.map(([date, items]) => (
+                <Fragment key={date}>
+                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                    <TableCell colSpan={3} className="py-1.5 pl-6">
+                      <span className="text-xs font-medium">{fmtDate(date)}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {daysUntil(date)} · {items.length} report{items.length === 1 ? "" : "s"}
                       </span>
-                    )}
-                    {r.name && (
-                      <div className="text-xs text-neutral-500 truncate max-w-xs">{r.name}</div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap align-top">
-                    <span className="text-neutral-100 tabular-nums">{fmtDate(r.next_earnings!)}</span>
-                    <span className="text-neutral-500 text-xs ml-2">{daysUntil(r.next_earnings!)}</span>
-                  </td>
-                  <td className="px-3 py-2 text-right align-top">
-                    <Pct v={r.return_1w} />
-                  </td>
-                  <td className="px-3 py-2 text-right align-top">
-                    <Pct v={r.return_1m} />
-                  </td>
-                </tr>
+                    </TableCell>
+                  </TableRow>
+                  {items.map((r) => (
+                    <TableRow key={r.ticker}>
+                      <TableCell className="pl-6">
+                        <div className="flex items-center gap-2">
+                          <Ticker className="w-14 text-sm">{r.ticker}</Ticker>
+                          <span className="max-w-80 truncate text-muted-foreground">{r.name}</span>
+                          {r.in_smart_money && (
+                            <Badge variant="warning" className="h-4 rounded-sm px-1 text-[10px]" title="Held by a tracked filer">
+                              SM
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right"><Pct value={r.return_1w} fraction /></TableCell>
+                      <TableCell className="pr-6 text-right"><Pct value={r.return_1m} fraction /></TableCell>
+                    </TableRow>
+                  ))}
+                </Fragment>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            </TableBody>
+          </Table>
+        )}
+      </TableCard>
     </div>
   );
 }

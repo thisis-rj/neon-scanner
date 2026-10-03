@@ -1,8 +1,21 @@
+import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase";
-import { shortDate, daysAgo } from "@/lib/format";
+import { daysAgo } from "@/lib/format";
 import { FormTooltip } from "@/components/FormTooltip";
 import { FORMS } from "@/lib/glossary";
-import Link from "next/link";
+import { PageHeader } from "@/components/app/page-header";
+import { TableCard } from "@/components/app/table-card";
+import { DateCell, SecLink, Ticker } from "@/components/app/cells";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 // Read Supabase live on EVERY request, like every other page. We briefly used
 // ISR (revalidate = 1800) to avoid re-pulling ~8K rows per load — but on a
@@ -95,16 +108,16 @@ async function enrichRecent(recent: Filing[]): Promise<Map<string, Enrichment>> 
 // from the filing, not interpretation.
 type Tone = "buy" | "sell" | "mixed" | "activist" | "passive" | "portfolio" | "event" | "neutral";
 
-const TONE_CLASS: Record<Tone, string> = {
-  buy: "text-emerald-300 bg-emerald-950/60 border border-emerald-800/60",
-  sell: "text-rose-300 bg-rose-950/60 border border-rose-800/60",
-  mixed: "text-amber-300 bg-amber-950/50 border border-amber-800/50",
-  activist: "text-amber-300 bg-amber-950/40 border border-amber-800/40",
-  passive: "text-neutral-300 bg-neutral-800/60 border border-neutral-700",
-  portfolio: "text-sky-300 bg-sky-950/40 border border-sky-800/40",
-  event: "text-blue-300 bg-blue-950/40 border border-blue-800/40",
-  neutral: "text-neutral-400 bg-neutral-800/40 border border-neutral-700/60",
-};
+const TONE_VARIANT = {
+  buy: "positive",
+  sell: "negative",
+  mixed: "warning",
+  activist: "warning",
+  passive: "muted",
+  portfolio: "info",
+  event: "outline",
+  neutral: "muted",
+} as const;
 
 function classify(formType: string, f4dir: Enrichment["f4dir"]): { label: string; tone: Tone } {
   const t = formType.toUpperCase();
@@ -122,10 +135,31 @@ function classify(formType: string, f4dir: Enrichment["f4dir"]): { label: string
   return { label: formType, tone: "neutral" };
 }
 
-// Small badge used in the definitions legend, styled identically to the Signal column.
-function Chip({ tone, children }: { tone: Tone; children: string }) {
-  return <span className={`inline-block rounded px-1.5 py-0.5 ${TONE_CLASS[tone]}`}>{children}</span>;
+function SignalBadge({ tone, children }: { tone: Tone; children: string }) {
+  return <Badge variant={TONE_VARIANT[tone]}>{children}</Badge>;
 }
+
+// The EDGAR poll runs daily; a newest filing older than this means ingestion
+// has probably stalled (same threshold as lib/staleness.ts).
+const STALE_AFTER_DAYS = 7;
+
+const LEGEND: { tone: Tone; label: string; meaning: string }[] = [
+  { tone: "buy", label: "Insider buy", meaning: "an officer or director bought their own company’s stock" },
+  { tone: "sell", label: "Insider sell", meaning: "an insider sold shares" },
+  { tone: "activist", label: "Activist stake", meaning: "a 5%+ stake taken to push for change (13D)" },
+  { tone: "passive", label: "Passive 5%+ stake", meaning: "a big stake held passively, no activist intent (13G)" },
+  { tone: "portfolio", label: "Quarterly portfolio", meaning: "a fund’s full holdings snapshot (13F) — see Holdings" },
+  { tone: "event", label: "Corporate event", meaning: "a company’s own material announcement (8-K)" },
+];
+
+const FORM_LEGEND: { code: string; text: string }[] = [
+  { code: "13F", text: FORMS["13F-HR"].short },
+  { code: "13D", text: FORMS["SC 13D"].short },
+  { code: "13G", text: FORMS["SC 13G"].short },
+  { code: "Form 4", text: FORMS["4"].short },
+  { code: "8-K", text: FORMS["8-K"].short },
+  { code: "…/A", text: "an amendment (update) to a prior filing" },
+];
 
 export default async function FilingsPage() {
   const filings = await fetchAllFilings();
@@ -133,121 +167,126 @@ export default async function FilingsPage() {
   const recent = filings.slice(0, 50);
   const enrich = await enrichRecent(recent);
 
+  const newest = filings[0]?.filed_at ?? null;
+  const newestAgeDays = newest ? Math.floor((Date.now() - new Date(newest).getTime()) / 86_400_000) : null;
+  const stale = newestAgeDays != null && newestAgeDays > STALE_AFTER_DAYS;
+
   return (
-    <div className="max-w-7xl mx-auto space-y-10">
-      <section>
-        <h1 className="text-2xl font-semibold tracking-tight">Filings log</h1>
-        <p className="mt-1 text-sm text-neutral-400">
-          {filings.length.toLocaleString()} filings ingested from {filerCount} tracked filers.
-          Showing the most recent 50 below.
-        </p>
-        <p className="mt-2 text-xs text-neutral-500">
-          Each row shows the <em>target company</em> and what the filing means —
-          insider buys are green, sells red. 13F rows are whole portfolios (no single
-          company), shown as &ldquo;Quarterly portfolio&rdquo;; open Holdings for the positions.
-        </p>
+    <div className="flex flex-col gap-8">
+      <PageHeader
+        title="Filings log"
+        description={
+          <>
+            Every filing from the tracked filers, newest first. Each row shows the target company and
+            what the filing <em>is</em>. 13F rows are whole portfolios, so they have no single company —
+            open <Link href="/holdings" className="text-foreground underline underline-offset-4">Holdings</Link> for
+            the positions.
+          </>
+        }
+        meta={
+          <>
+            <span>
+              <span className="font-medium text-foreground tabular-nums">{filings.length.toLocaleString()}</span> filings
+            </span>
+            <span>
+              <span className="font-medium text-foreground tabular-nums">{filerCount}</span> filers
+            </span>
+            {newest && (
+              <Badge variant={stale ? "warning" : "muted"} className="font-normal">
+                <span className={stale ? "size-1.5 rounded-full bg-warning" : "size-1.5 rounded-full bg-positive"} />
+                {stale
+                  ? `Newest filing is ${daysAgo(newest)} — ingest may have stalled`
+                  : `Newest filing ${daysAgo(newest)}`}
+              </Badge>
+            )}
+          </>
+        }
+      />
 
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-          <div className="rounded-md border border-neutral-800 p-3">
-            <div className="text-neutral-400 font-medium uppercase tracking-wide mb-2">
-              What each &ldquo;Signal&rdquo; means
-            </div>
-            <ul className="space-y-1.5 text-neutral-300">
-              <li><Chip tone="buy">Insider buy</Chip> — an officer or director bought their own company&rsquo;s stock</li>
-              <li><Chip tone="sell">Insider sell</Chip> — an insider sold shares</li>
-              <li><Chip tone="activist">Activist stake</Chip> — a 5%+ stake taken to push for change (13D)</li>
-              <li><Chip tone="passive">Passive 5%+ stake</Chip> — a big stake held passively, no activist intent (13G)</li>
-              <li><Chip tone="portfolio">Quarterly portfolio</Chip> — a fund&rsquo;s full holdings snapshot (13F); open Holdings for positions</li>
-              <li><Chip tone="event">Corporate event</Chip> — a company&rsquo;s own material announcement (8-K)</li>
-            </ul>
-          </div>
-          <div className="rounded-md border border-neutral-800 p-3">
-            <div className="text-neutral-400 font-medium uppercase tracking-wide mb-2">Forms</div>
-            <ul className="space-y-1 text-neutral-300">
-              <li><span className="font-mono text-neutral-100">13F</span> — {FORMS["13F-HR"].short}</li>
-              <li><span className="font-mono text-neutral-100">13D</span> — {FORMS["SC 13D"].short}</li>
-              <li><span className="font-mono text-neutral-100">13G</span> — {FORMS["SC 13G"].short}</li>
-              <li><span className="font-mono text-neutral-100">Form 4</span> — {FORMS["4"].short}</li>
-              <li><span className="font-mono text-neutral-100">8-K</span> — {FORMS["8-K"].short}</li>
-              <li><span className="font-mono text-neutral-400">…/A</span> — an amendment (update) to a prior filing</li>
-            </ul>
-          </div>
-        </div>
-        <p className="mt-3 text-xs text-neutral-500">
-          Hover any form code (e.g. <span className="underline decoration-dotted">13G/A</span>) for a definition.{" "}
-          <Link href="/learn" className="text-blue-400 hover:underline">Full glossary →</Link>
-        </p>
-      </section>
-
-      <section>
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
-          Most recent activity
-        </h2>
-        <div className="rounded-md border border-neutral-800">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
-              <tr>
-                <th className="px-3 py-2 font-medium" title="Date the filing was submitted to SEC">Filed</th>
-                <th className="px-3 py-2 font-medium">Filer</th>
-                <th className="px-3 py-2 font-medium">Company</th>
-                <th className="px-3 py-2 font-medium">Form</th>
-                <th className="px-3 py-2 font-medium" title="What the filing means. Insider buys are green, sells red.">Signal</th>
-                <th className="px-3 py-2 font-medium">Link</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-800">
-              {recent.map((f) => {
-                const e = enrich.get(f.id);
-                const sig = classify(f.form_type, e?.f4dir ?? null);
-                const isCorpEvent = f.form_type.toUpperCase().startsWith("8-K");
-                const company = e?.company ?? (isCorpEvent ? f.filer_name : null);
-                const ticker = e?.ticker ?? null;
-                return (
-                <tr key={f.accession_number} className="hover:bg-neutral-900/50">
-                  <td className="px-3 py-2 whitespace-nowrap text-neutral-300" title={`Filed on ${shortDate(f.filed_at)}`}>
-                    <span className="text-neutral-100">{shortDate(f.filed_at)}</span>
-                    <span className="text-neutral-500 text-xs ml-2">({daysAgo(f.filed_at)})</span>
-                  </td>
-                  <td className="px-3 py-2 text-neutral-200">{f.filer_name ?? f.cik}</td>
-                  <td className="px-3 py-2">
+      <TableCard
+        title="Most recent activity"
+        description="The latest 50 filings. Hover a form code for its definition; every row links to the filing on sec.gov."
+      >
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="pl-6">Filed</TableHead>
+              <TableHead>Filer</TableHead>
+              <TableHead>Company</TableHead>
+              <TableHead>Form</TableHead>
+              <TableHead>Signal</TableHead>
+              <TableHead className="pr-6 text-right">Source</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {recent.map((f) => {
+              const e = enrich.get(f.id);
+              const sig = classify(f.form_type, e?.f4dir ?? null);
+              const isCorpEvent = f.form_type.toUpperCase().startsWith("8-K");
+              const company = e?.company ?? (isCorpEvent ? f.filer_name : null);
+              const ticker = e?.ticker ?? null;
+              return (
+                <TableRow key={f.accession_number}>
+                  <TableCell className="pl-6">
+                    <DateCell iso={f.filed_at} />
+                  </TableCell>
+                  <TableCell className="max-w-64 truncate" title={f.filer_name ?? f.cik}>
+                    {f.filer_name ?? f.cik}
+                  </TableCell>
+                  <TableCell className="max-w-72">
                     {company ? (
-                      <span className="text-neutral-100">
-                        {company}
-                        {ticker ? <span className="text-neutral-500 text-xs ml-1">{ticker}</span> : null}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="truncate" title={company}>{company}</span>
+                        {ticker && <Ticker className="text-muted-foreground">{ticker}</Ticker>}
+                      </div>
                     ) : (
-                      <span className="text-neutral-600">—</span>
+                      <span className="text-muted-foreground/60">—</span>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-neutral-300">
+                  </TableCell>
+                  <TableCell>
                     <FormTooltip term={f.form_type} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={`inline-block rounded px-2 py-0.5 text-xs whitespace-nowrap ${TONE_CLASS[sig.tone]}`}>
-                      {sig.label}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    {f.primary_doc_url ? (
-                      <a
-                        href={f.primary_doc_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-blue-400 hover:underline"
-                      >
-                        sec.gov ↗
-                      </a>
-                    ) : (
-                      <span className="text-neutral-600">—</span>
-                    )}
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                  </TableCell>
+                  <TableCell>
+                    <SignalBadge tone={sig.tone}>{sig.label}</SignalBadge>
+                  </TableCell>
+                  <TableCell className="pr-6 text-right">
+                    <SecLink href={f.primary_doc_url} />
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableCard>
+
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>How to read this</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-6 md:grid-cols-2">
+          <ul className="flex flex-col gap-2 text-xs text-muted-foreground">
+            {LEGEND.map((l) => (
+              <li key={l.tone} className="flex items-baseline gap-2">
+                <SignalBadge tone={l.tone}>{l.label}</SignalBadge>
+                <span className="text-pretty">{l.meaning}</span>
+              </li>
+            ))}
+          </ul>
+          <ul className="flex flex-col gap-2 text-xs text-muted-foreground">
+            {FORM_LEGEND.map((f) => (
+              <li key={f.code} className="flex items-baseline gap-2">
+                <span className="w-12 shrink-0 font-mono text-foreground">{f.code}</span>
+                <span className="text-pretty">{f.text}</span>
+              </li>
+            ))}
+            <li className="pt-1">
+              <Link href="/learn" className="text-primary underline-offset-4 hover:underline">
+                Full glossary →
+              </Link>
+            </li>
+          </ul>
+        </CardContent>
+      </Card>
     </div>
   );
 }

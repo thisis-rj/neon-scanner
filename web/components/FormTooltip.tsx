@@ -1,69 +1,48 @@
 "use client";
 
 import Link from "next/link";
+import { ArrowRightIcon } from "lucide-react";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { FORMS } from "@/lib/glossary";
 
-// Convert a form-type string into a /learn page anchor slug
-function slugForForm(formType: string): string {
-  // Slug from the canonical term label (matches anchors on /learn).
-  const entry = FORMS[formType] ?? FORMS[`SCHEDULE ${formType}`] ?? FORMS[`SC ${formType}`];
-  const term = entry?.term ?? formType;
+// Try several lookups so we can pass either "13D/A" or "SC 13D/A".
+function lookupForm(label: string) {
+  return FORMS[label] ?? FORMS[`SCHEDULE ${label}`] ?? FORMS[`SC ${label}`] ?? null;
+}
+
+// Slug from the canonical term label (matches anchors on /learn).
+function slugFor(term: string): string {
   return term.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 /**
- * Inline form-type label with a styled hover popover.
- * Used in tables on Events, Filings, etc. Replaces the plain HTML title="..."
- * tooltips so we get nicely-styled, branded micro-popovers with a "Learn more →"
- * link to the dedicated /learn page section.
+ * Form-type code (e.g. "13G/A") with a hover card defining it and a
+ * "Learn more" link to the matching /learn section.
  */
-// Try several lookups so we can pass either "13D/A" or "SC 13D/A".
-function lookupForm(label: string) {
-  if (FORMS[label]) return FORMS[label];
-  if (FORMS[`SCHEDULE ${label}`]) return FORMS[`SCHEDULE ${label}`];
-  if (FORMS[`SC ${label}`]) return FORMS[`SC ${label}`];
-  return null;
-}
-
 export function FormTooltip({ term }: { term: string }) {
   const entry = lookupForm(term);
-  const blurb = entry?.short ?? term;
-  const slug = slugForForm(term);
+  const title = entry?.term ?? term;
 
   return (
-    <span
-      className="group relative inline-block focus-within:z-30"
-      tabIndex={0}
-    >
-      <span className="underline decoration-dotted decoration-neutral-500 cursor-help">
-        {term}
-      </span>
-      <span
-        className={[
-          // hidden by default, visible on hover OR keyboard/click focus
-          "invisible opacity-0 group-hover:visible group-hover:opacity-100",
-          "group-focus:visible group-focus:opacity-100",
-          "transition-opacity duration-100",
-          // popover positioning
-          "absolute left-0 top-full mt-1 z-30",
-          "w-60 rounded-md border border-neutral-700 bg-neutral-900 shadow-xl",
-          "p-2",
-          "text-left",
-        ].join(" ")}
-      >
-        <span className="block font-semibold text-xs text-neutral-100">
-          {entry?.term ?? term}
-        </span>
-        <span className="block text-xs text-neutral-300 mt-1 leading-snug">
-          {blurb}
-        </span>
-        <Link
-          href={`/learn#${slug}`}
-          className="block text-xs text-blue-400 hover:underline mt-2"
+    <HoverCard openDelay={120} closeDelay={80}>
+      <HoverCardTrigger asChild>
+        <button
+          type="button"
+          className="cursor-help font-mono text-xs underline decoration-muted-foreground/50 decoration-dotted underline-offset-4"
         >
-          Learn more →
+          {term}
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent align="start" className="flex w-72 flex-col gap-1.5">
+        <div className="text-sm font-medium">{title}</div>
+        <p className="text-xs leading-relaxed text-muted-foreground">{entry?.short ?? term}</p>
+        <Link
+          href={`/learn#${slugFor(title)}`}
+          className="mt-1 inline-flex items-center gap-1 text-xs text-primary underline-offset-4 hover:underline"
+        >
+          Learn more <ArrowRightIcon className="size-3" />
         </Link>
-      </span>
-    </span>
+      </HoverCardContent>
+    </HoverCard>
   );
 }

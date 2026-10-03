@@ -1,7 +1,24 @@
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo, tier } from "@/lib/filers";
+import { daysAgo, fmtShares, fmtUsd } from "@/lib/format";
+import { cn } from "cn";
 import { TierFilter } from "@/components/TierFilter";
 import { FilerCardTabs } from "@/components/FilerCardTabs";
+import { PageHeader } from "@/components/app/page-header";
+import { Hint, ThirteenFDelayNote, TierBadge } from "@/components/app/cells";
+import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { InfoIcon } from "lucide-react";
 
 // Force dynamic rendering. Without this, Next.js statically renders the page
 // at build time and serves the snapshot from the deploy. After May 17 we
@@ -9,14 +26,6 @@ import { FilerCardTabs } from "@/components/FilerCardTabs";
 // pre-dated the Q1 2026 13F ingestion. Fresh DB read on every request.
 export const dynamic = "force-dynamic";
 
-// Color classes for the signal-quality tier chip (S/A/B/C).
-const TIER_CHIP: Record<"S" | "A" | "B" | "C", string> = {
-  S: "bg-emerald-600/30 text-emerald-300 border border-emerald-700/50",
-  A: "bg-sky-600/30 text-sky-300 border border-sky-700/50",
-  B: "bg-neutral-800 text-neutral-400 border border-neutral-700",
-  C: "bg-neutral-800 text-neutral-500 border border-neutral-700",
-};
-import { daysAgo } from "@/lib/format";
 
 // Holdings view: per-filer most recent 13F snapshot, with top positions by value.
 // This is *plumbing inspection*, not signal generation — confluence scoring
@@ -392,13 +401,6 @@ type FilerSummary = {
   totalPositions: number;   // count of all positions that quarter
 };
 
-function fmtShares(n: number | null): string {
-  if (n == null) return "—";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-  return n.toLocaleString();
-}
-
 // Compact % formatter for the Δ shares column. Caps massive values that
 // otherwise overflow the column (e.g. NEW positions building from 1 share
 // to 100k → "+10,000,000%" looks broken). Renders ≥1000% as multiples ("12×").
@@ -413,35 +415,47 @@ function fmtPctCompact(pct: number): string {
   return `${sign}${pct.toFixed(1)}%`;
 }
 
-function fmtUsd(n: number | null): string {
-  if (n == null) return "—";
-  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(0)}M`;
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
-  return `$${n.toFixed(0)}`;
-}
 
 type Tier = "S" | "A" | "B" | "C";
 
-function truncate32(s: string | null, n = 32): string {
-  const v = s ?? "?";
-  return v.length > n ? v.slice(0, n) + "…" : v;
+function EmptyDiff({ priorPeriod, msg }: { priorPeriod: string | null; msg: string }) {
+  return (
+    <p className="px-4 py-8 text-center text-xs text-muted-foreground">
+      {priorPeriod
+        ? `${msg} vs prior quarter ${priorPeriod}.`
+        : "No prior 13F to compare — first quarter on file for this filer."}
+    </p>
+  );
 }
 
-function EmptyDiff({ priorPeriod, msg }: { priorPeriod: string | null; msg: string }) {
-  if (!priorPeriod) {
-    return (
-      <div className="px-3 py-6 text-[11px] text-neutral-500 italic text-center">
-        No prior 13F to compare. First-quarter filer or only one period of data.
-      </div>
-    );
-  }
+// One labelled block inside the Bought / Sold tabs.
+function DiffSection({
+  label,
+  count,
+  tone,
+  children,
+}: {
+  label: string;
+  count: number;
+  tone: "positive" | "warning" | "negative";
+  children: React.ReactNode;
+}) {
+  const dot = { positive: "bg-positive", warning: "bg-warning", negative: "bg-negative" }[tone];
   return (
-    <div className="px-3 py-6 text-[11px] text-neutral-500 italic text-center">
-      {msg} (vs prior quarter {priorPeriod}).
+    <div>
+      <div className="flex items-center gap-2 border-b bg-muted/30 px-4 py-1.5 text-[11px] font-medium text-muted-foreground uppercase">
+        <span className={cn("size-1.5 rounded-full", dot)} />
+        {label}
+        <span className="tabular-nums">({count})</span>
+      </div>
+      <Table className="text-xs">
+        <TableBody>{children}</TableBody>
+      </Table>
     </div>
   );
 }
+
+const cell = "py-1.5";
 
 // "Bought" view: positions the filer ADDED to or INITIATED this quarter.
 function BoughtView({ f }: { f: FilerSummary }) {
@@ -449,109 +463,118 @@ function BoughtView({ f }: { f: FilerSummary }) {
     return <EmptyDiff priorPeriod={f.priorPeriod} msg="No new positions or adds ≥10%" />;
   }
   return (
-    <div className="text-[11px]">
-      <div className="px-3 py-1.5 text-neutral-500 bg-neutral-950 border-b border-neutral-900">
-        New positions + adds (share-count ≥10%) vs {f.priorPeriod}
-      </div>
+    <div>
       {f.news.length > 0 && (
-        <div>
-          <div className="px-3 py-1 bg-emerald-950/40 text-emerald-300 font-medium border-b border-emerald-900/30">
-            🆕 New positions ({f.news.length})
-          </div>
-          <table className="w-full">
-            <tbody className="divide-y divide-neutral-900">
-              {f.news.map((p) => (
-                <tr key={`new-${p.cusip}`} className="hover:bg-neutral-900/40">
-                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={p.issuer_name ?? ""}>{truncate32(p.issuer_name)}</td>
-                  <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">{fmtShares(p.shares)}</td>
-                  <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">{fmtUsd(p.value_usd)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DiffSection label="New positions" count={f.news.length} tone="positive">
+          {f.news.map((p) => (
+            <TableRow key={`new-${p.cusip}`}>
+              <TableCell className={cn(cell, "max-w-56 truncate pl-4")} title={p.issuer_name ?? ""}>{p.issuer_name ?? "?"}</TableCell>
+              <TableCell className={cn(cell, "text-right text-muted-foreground tabular-nums")}>{fmtShares(p.shares)} sh</TableCell>
+              <TableCell className={cn(cell, "pr-4 text-right tabular-nums")}>{fmtUsd(p.value_usd)}</TableCell>
+            </TableRow>
+          ))}
+        </DiffSection>
       )}
       {f.adds.length > 0 && (
-        <div>
-          <div className="px-3 py-1 bg-emerald-950/30 text-emerald-400 font-medium border-b border-emerald-900/20">
-            + Added ({f.adds.length})
-          </div>
-          <table className="w-full">
-            <tbody className="divide-y divide-neutral-900">
-              {f.adds.map((a) => (
-                <tr key={`add-${a.pos.cusip}`} className="hover:bg-neutral-900/40">
-                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={a.pos.issuer_name ?? ""}>{truncate32(a.pos.issuer_name)}</td>
-                  <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">{fmtShares(a.prevShares)} → {fmtShares(a.pos.shares)}</td>
-                  <td className="px-3 py-1 text-right text-emerald-400 tabular-nums font-semibold">{fmtPctCompact(a.pct)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DiffSection label="Added ≥10%" count={f.adds.length} tone="positive">
+          {f.adds.map((a) => (
+            <TableRow key={`add-${a.pos.cusip}`}>
+              <TableCell className={cn(cell, "max-w-56 truncate pl-4")} title={a.pos.issuer_name ?? ""}>{a.pos.issuer_name ?? "?"}</TableCell>
+              <TableCell className={cn(cell, "text-right text-muted-foreground tabular-nums")}>{fmtShares(a.prevShares)} → {fmtShares(a.pos.shares)}</TableCell>
+              <TableCell className={cn(cell, "pr-4 text-right font-medium text-positive tabular-nums")}>{fmtPctCompact(a.pct)}</TableCell>
+            </TableRow>
+          ))}
+        </DiffSection>
       )}
     </div>
   );
 }
 
 // "Sold" view: positions the filer TRIMMED or EXITED this quarter.
-// Per CLAUDE.md §2.3 — exits/trims get equal prominence to entries via
-// their own dedicated tab (not buried in a footer).
+// Per CLAUDE.md §2.3 — exits/trims get equal prominence to entries.
 function SoldView({ f }: { f: FilerSummary }) {
   if (f.trims.length + f.exits.length === 0) {
     return <EmptyDiff priorPeriod={f.priorPeriod} msg="No trims ≥10% or exits" />;
   }
   return (
-    <div className="text-[11px]">
-      <div className="px-3 py-1.5 text-neutral-500 bg-neutral-950 border-b border-neutral-900">
-        Trims (share-count ≥10%) + exits vs {f.priorPeriod}
-      </div>
-      {f.trims.length > 0 && (
-        <div>
-          <div className="px-3 py-1 bg-amber-950/30 text-amber-400 font-medium border-b border-amber-900/20">
-            ⇣ Trimmed ({f.trims.length})
-          </div>
-          <table className="w-full">
-            <tbody className="divide-y divide-neutral-900">
-              {f.trims.map((t) => (
-                <tr key={`trim-${t.pos.cusip}`} className="hover:bg-neutral-900/40">
-                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={t.pos.issuer_name ?? ""}>{truncate32(t.pos.issuer_name)}</td>
-                  <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">{fmtShares(t.prevShares)} → {fmtShares(t.pos.shares)}</td>
-                  <td className="px-3 py-1 text-right text-amber-400 tabular-nums font-semibold">{fmtPctCompact(t.pct)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+    <div>
       {f.exits.length > 0 && (
-        <div>
-          <div className="px-3 py-1 bg-red-950/30 text-red-400 font-medium border-b border-red-900/20">
-            ✕ Exited ({f.exits.length})
-          </div>
-          <table className="w-full">
-            <tbody className="divide-y divide-neutral-900">
-              {f.exits.map((e) => (
-                <tr key={`exit-${e.cusip}`} className="hover:bg-neutral-900/40">
-                  <td className="px-3 py-1 text-neutral-200 truncate max-w-[20ch]" title={e.issuer_name ?? ""}>{truncate32(e.issuer_name)}</td>
-                  <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">{fmtShares(e.shares)} sh</td>
-                  <td className="px-3 py-1 text-right text-red-400/80 tabular-nums">{fmtUsd(e.value_usd)} sold</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DiffSection label="Exited" count={f.exits.length} tone="negative">
+          {f.exits.map((e) => (
+            <TableRow key={`exit-${e.cusip}`}>
+              <TableCell className={cn(cell, "max-w-56 truncate pl-4")} title={e.issuer_name ?? ""}>{e.issuer_name ?? "?"}</TableCell>
+              <TableCell className={cn(cell, "text-right text-muted-foreground tabular-nums")}>{fmtShares(e.shares)} sh</TableCell>
+              <TableCell className={cn(cell, "pr-4 text-right text-negative tabular-nums")}>{fmtUsd(e.value_usd)} sold</TableCell>
+            </TableRow>
+          ))}
+        </DiffSection>
+      )}
+      {f.trims.length > 0 && (
+        <DiffSection label="Trimmed ≥10%" count={f.trims.length} tone="warning">
+          {f.trims.map((t) => (
+            <TableRow key={`trim-${t.pos.cusip}`}>
+              <TableCell className={cn(cell, "max-w-56 truncate pl-4")} title={t.pos.issuer_name ?? ""}>{t.pos.issuer_name ?? "?"}</TableCell>
+              <TableCell className={cn(cell, "text-right text-muted-foreground tabular-nums")}>{fmtShares(t.prevShares)} → {fmtShares(t.pos.shares)}</TableCell>
+              <TableCell className={cn(cell, "pr-4 text-right font-medium text-warning tabular-nums")}>{fmtPctCompact(t.pct)}</TableCell>
+            </TableRow>
+          ))}
+        </DiffSection>
       )}
     </div>
   );
+}
+
+const COLUMN_GUIDE: [string, string][] = [
+  ["% of port", "Position value as a share of the filer's whole US-equity book. ≥10% = high conviction."],
+  ["$/sh", "Under each value: quarter-end value ÷ shares. A mark, NOT the price the filer paid."],
+  ["Est. cost", "Estimated entry: per-quarter VWAP weighted across the quarters they accumulated. Typically ±15–25% off."],
+  ["P&L", "(Now − Est. cost) ÷ Est. cost — the filer's approximate paper gain on this position."],
+  ["Δ shares", "Change in share count vs their prior 13F. NEW = not held last quarter."],
+  ["Filed", "Green = filed in the last 14 days. Red = older than 120 days (stale)."],
+  ["Left bar", "Amber = activist filer. Blue = corporate strategic (a public company)."],
+];
+
+function ColumnGuide() {
+  return (
+    <HoverCard openDelay={100}>
+      <HoverCardTrigger asChild>
+        <Button variant="outline" size="sm">
+          <InfoIcon data-icon="inline-start" />
+          Column guide
+        </Button>
+      </HoverCardTrigger>
+      <HoverCardContent align="end" className="w-96">
+        <dl className="grid grid-cols-[5.5rem_1fr] gap-x-3 gap-y-2 text-xs">
+          {COLUMN_GUIDE.map(([term, def]) => (
+            <div key={term} className="contents">
+              <dt className="font-medium">{term}</dt>
+              <dd className="text-pretty text-muted-foreground">{def}</dd>
+            </div>
+          ))}
+        </dl>
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
+function recencyTone(days: number | null): string {
+  if (days == null) return "text-muted-foreground";
+  if (days <= 14) return "text-positive";
+  if (days > 120) return "text-negative";
+  if (days <= 60) return "text-foreground";
+  return "text-muted-foreground";
+}
+
+function perfTone(v: number | null): string {
+  return v == null ? "text-muted-foreground" : v >= 0 ? "text-positive" : "text-negative";
 }
 
 export default async function HoldingsPage() {
   const { filers, total, prices, costs, perf } = await fetchHoldings();
   // (nameToTicker mutation already applied to position.ticker in fetchHoldings)
 
-  // Compute counts per tier across all filers for the filter-chip badges.
-  // Filtering itself is done client-side by TierFilter (toggles .hidden on
-  // each card via data-tier attribute) — server always renders all cards.
+  // Counts per tier for the filter badges. Filtering itself is client-side
+  // (TierFilter toggles .hidden on each card via data-tier).
   const tierCounts: Record<Tier, number> = { S: 0, A: 0, B: 0, C: 0 };
   for (const f of filers) {
     const t = (filerInfo(f.cik)?.signalTier ?? "B") as Tier;
@@ -560,210 +583,197 @@ export default async function HoldingsPage() {
 
   if (filers.length === 0) {
     return (
-      <div className="max-w-3xl mx-auto py-12 text-center space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Holdings</h1>
-        <p className="text-neutral-400">
-          No parsed 13F positions yet. Run <code className="text-neutral-300">python -m ingest.parse_13f</code> to populate.
-        </p>
-      </div>
+      <Empty className="py-24">
+        <EmptyHeader>
+          <EmptyTitle>No parsed 13F positions yet</EmptyTitle>
+          <EmptyDescription>
+            Run <code className="font-mono text-xs">python -m ingest.parse_13f</code> to populate.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     );
   }
+
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Holdings — latest 13F per filer</h1>
-        <p className="mt-1 text-sm text-neutral-400">
-          {total.toLocaleString()} position rows parsed across {filers.length} filers.
-          Showing each filer&apos;s 10 largest positions in their most-recent 13F.
-        </p>
-        <p className="mt-2 text-xs text-neutral-500">
-          Each card shows the filer&apos;s top 10 positions in their latest 13F. Sorted by filing recency (newest at the top). 13Fs have a 45-day legal disclosure delay — the gap between &quot;period&quot; and &quot;filed&quot; is that delay.
-        </p>
-      </header>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Holdings"
+        description="Each tracked filer's latest 13F: their 10 largest positions, plus what they bought and sold versus the prior quarter. Newest filings first. The gap between “period” and “filed” is the legal disclosure delay."
+        meta={
+          <>
+            <span>
+              <span className="font-medium text-foreground tabular-nums">{filers.length}</span> filers
+            </span>
+            <span>
+              <span className="font-medium text-foreground tabular-nums">{total.toLocaleString()}</span> position rows
+            </span>
+            <ThirteenFDelayNote />
+          </>
+        }
+      />
 
-      <TierFilter counts={tierCounts} />
-
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
-        <span><span className="inline-block w-2 h-2 align-middle mr-1 bg-amber-500"></span>activist filer</span>
-        <span><span className="inline-block w-2 h-2 align-middle mr-1 bg-sky-500"></span>corporate strategic</span>
-        <span><span className="text-emerald-400">filed &lt;14d ago</span> = fresh</span>
-        <span><span className="text-red-400">filed &gt;120d ago</span> = stale</span>
-        <span className="text-emerald-300">% of port ≥10% = high conviction</span>
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
-        <span><span className="text-amber-400">Mark/sh</span> = quarter-end $/share (NOT entry)</span>
-        <span><span className="text-amber-400">Est. cost</span> = VWAP-proxy entry (±15-25%)</span>
-        <span><span className="text-amber-400">P&L</span> = (Now − Est. cost) / Est. cost — filer's paper gain</span>
-        <span><span className="text-amber-400">Δ shares</span> = share-count change vs prior 13F</span>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <TierFilter counts={tierCounts} />
+        <ColumnGuide />
       </div>
 
-      <div id="tier-filter-empty" className="hidden text-sm text-neutral-500 italic py-12 text-center border border-neutral-900 rounded">
-        No filers match the selected tier(s). Toggle a tier above to expand the view.
-      </div>
+      <Empty id="tier-filter-empty" className="hidden border py-16">
+        <EmptyHeader>
+          <EmptyTitle>No filers match the selected tiers</EmptyTitle>
+          <EmptyDescription>Turn a tier back on to see its filers.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         {filers.map((f) => {
           const info = filerInfo(f.cik);
           const t = tier(f.cik);
-          const borderL = t === 2 ? "border-l-amber-500" : t === 1 ? "border-l-sky-500" : "border-l-neutral-800";
-
-          // Recency badge: fresh = filed within 14 days, stale = filed >90 days ago.
-          const filedDate = f.latestFiledAt ? new Date(f.latestFiledAt) : null;
-          const daysSinceFile = filedDate ? Math.floor((Date.now() - filedDate.getTime()) / 86400000) : null;
-          let recencyClass = "text-neutral-500";
-          if (daysSinceFile != null) {
-            if (daysSinceFile <= 14) recencyClass = "text-emerald-400";
-            else if (daysSinceFile <= 60) recencyClass = "text-neutral-300";
-            else if (daysSinceFile > 120) recencyClass = "text-red-400";
-          }
-
           const signalTier = info?.signalTier ?? "B";
+          const daysSinceFile = f.latestFiledAt
+            ? Math.floor((Date.now() - new Date(f.latestFiledAt).getTime()) / 86_400_000)
+            : null;
+          const fp = perf[f.cik];
+          const fmtPerf = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(0)}%`);
+
           return (
-          <div key={f.cik} data-tier={signalTier} className={`rounded-md border border-neutral-800 border-l-2 ${borderL} overflow-hidden`}>
-            <div className="px-3 py-2 bg-neutral-900 flex items-baseline justify-between gap-2">
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  {info?.signalTier && (
-                    <span className={`px-1 text-[10px] font-mono rounded shrink-0 ${TIER_CHIP[info.signalTier]}`} title={`Signal-quality tier: ${info.signalTier}`}>
-                      {info.signalTier}
-                    </span>
-                  )}
-                  <div className="font-medium text-neutral-100 truncate" title={f.name}>{info?.entity ?? f.name}</div>
-                </div>
+            <Card key={f.cik} data-tier={signalTier} className="relative gap-3 pb-0">
+              {t > 0 && (
+                <span
+                  className={cn("absolute inset-y-0 left-0 w-0.5", t === 2 ? "bg-warning" : "bg-info")}
+                  aria-hidden
+                />
+              )}
+              <CardHeader>
+                <CardTitle className="flex min-w-0 items-center gap-2">
+                  <TierBadge tier={signalTier} />
+                  <span className="truncate" title={f.name}>{info?.entity ?? f.name}</span>
+                </CardTitle>
                 {(info?.manager || info?.badge) && (
-                  <div className="text-xs text-neutral-500 truncate">
-                    {info?.manager && <span>{info.manager}</span>}
-                    {info?.manager && info?.badge && <span className="text-neutral-700"> · </span>}
-                    {info?.badge && <span className="italic">{info.badge}</span>}
+                  <CardDescription className="truncate text-xs">
+                    {[info?.manager, info?.badge].filter(Boolean).join(" · ")}
+                  </CardDescription>
+                )}
+                <CardAction className="text-right">
+                  <div className={cn("text-xs tabular-nums", recencyTone(daysSinceFile))}>
+                    filed {daysSinceFile != null ? daysAgo(f.latestFiledAt) : "?"}
                   </div>
+                  <div className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                    period {f.latestPeriod}
+                  </div>
+                </CardAction>
+              </CardHeader>
+
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 text-xs text-muted-foreground">
+                <span>
+                  <span className="text-foreground tabular-nums">{fmtUsd(f.totalValue)}</span> across{" "}
+                  <span className="text-foreground tabular-nums">{f.totalPositions}</span> positions
+                </span>
+                {fp && (fp.oneY != null || fp.threeY != null) && (
+                  <Hint
+                    label={
+                      <span className="tabular-nums">
+                        13F book 1Y <span className={perfTone(fp.oneY)}>{fmtPerf(fp.oneY)}</span>
+                        {" · "}3Y <span className={perfTone(fp.threeY)}>{fmtPerf(fp.threeY)}</span>
+                      </span>
+                    }
+                  >
+                    {"13F-clone return: what mirroring this filer's disclosed long book at period-start prices and holding to today would have returned.\n\nNOT the fund's actual return — 13F omits shorts, cash, options and non-US holdings."}
+                  </Hint>
                 )}
               </div>
-              <div className="text-right shrink-0">
-                <div className={`text-xs tabular-nums ${recencyClass}`}>
-                  filed {daysSinceFile != null ? daysAgo(f.latestFiledAt) : "?"}
-                </div>
-                <div className="text-[10px] text-neutral-500 tabular-nums">period {f.latestPeriod}</div>
-              </div>
-            </div>
-            <div className="px-3 py-1 bg-neutral-950 text-[10px] text-neutral-500 flex justify-between items-center gap-2">
-              <span>Total portfolio: {fmtUsd(f.totalValue)} · {f.totalPositions} positions</span>
-              {(() => {
-                const fp = perf[f.cik];
-                if (!fp || (fp.oneY == null && fp.threeY == null)) return null;
-                const col = (v: number | null) =>
-                  v == null ? "text-neutral-600"
-                  : v >= 0 ? "text-emerald-400/80" : "text-red-400/80";
-                const fmt = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(0)}%`);
-                return (
-                  <span
-                    className="tabular-nums whitespace-nowrap"
-                    title={"13F-CLONE RETURN — if you'd mirrored this filer's disclosed long book at the period-start price and held to today.\n\nThis is NOT the filer's actual fund return: 13F omits shorts, cash, options and international. For low-AUM-coverage filers (e.g. macro/credit funds) it reflects only the visible US-equity slice. Value-weighted, per-position return clamped to bound bad data."}
-                  >
-                    <span className="text-neutral-600">13F book: </span>
-                    <span className="text-neutral-500">1Y </span><span className={col(fp.oneY)}>{fmt(fp.oneY)}</span>
-                    <span className="text-neutral-700"> · </span>
-                    <span className="text-neutral-500">3Y </span><span className={col(fp.threeY)}>{fmt(fp.threeY)}</span>
-                  </span>
-                );
-              })()}
-            </div>
-            <FilerCardTabs
-              changesCount={f.news.length + f.adds.length}
-              soldCount={f.trims.length + f.exits.length}
-              current={(
-            <table className="w-full text-xs">
-              <thead className="text-neutral-500">
-                <tr>
-                  <th className="px-3 py-1 text-left font-medium">Issuer</th>
-                  <th className="px-3 py-1 text-right font-medium">Shares</th>
-                  <th className="px-3 py-1 text-right font-medium">Value</th>
-                  <th className="px-3 py-1 text-right font-medium" title="Position value as % of this filer's total US-equity portfolio">% of port</th>
-                  <th className="px-3 py-1 text-right font-medium" title="Quarter-end market value per share (value ÷ shares). NOT the actual entry price the filer paid.">Mark/sh</th>
-                  <th className="px-3 py-1 text-right font-medium" title="Latest closing price from yfinance">Now</th>
-                  <th className="px-3 py-1 text-right font-medium" title="Estimated cost basis — weighted-avg $/share across accumulation quarters, using each quarter's VWAP as a proxy. Typically ±15-25% off true cost. Missing = no usable VWAP yet.">Est. cost</th>
-                  <th className="px-3 py-1 text-right font-medium whitespace-nowrap" title="Filer's paper P&L: (Now - Est. cost) / Est. cost. Positive = filer is up vs estimated entry. NOT precise — Est. cost is a proxy.">P&L</th>
-                  <th className="px-3 py-1 text-right font-medium whitespace-nowrap" title="Filer behavior — change in SHARE COUNT vs their prior 13F. NEW = didn't hold last quarter. +X% = bought more. -X% = sold some. Different from P&L (which tracks price move, not share count change).">Δ shares</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {f.positions.map((h, i) => {
-                  const pct = f.totalValue > 0 && h.value_usd != null ? (h.value_usd / f.totalValue) * 100 : null;
-                  const markPrice = h.value_usd != null && h.shares && h.shares > 0 ? h.value_usd / h.shares : null;
-                  const nowPrice = h.ticker ? prices[h.ticker] ?? null : null;
-                  // Estimated cost basis from filer_position_cost (proxy via per-quarter VWAP)
-                  const costEst = h.ticker ? costs[`${f.cik}|${h.ticker}`] : undefined;
-                  const estCost = costEst?.estimated_cost_basis ?? null;
-                  const vsCostPct = nowPrice != null && estCost != null && estCost > 0
-                    ? ((nowPrice - estCost) / estCost) * 100
-                    : null;
-                  const vsCostColor = vsCostPct == null
-                    ? "text-neutral-500"
-                    : vsCostPct >= 50 ? "text-emerald-300 font-semibold"
-                    : vsCostPct >= 0 ? "text-emerald-400/80"
-                    : vsCostPct >= -15 ? "text-red-400/70"
-                    : "text-red-400";
-                  // vs Q-1 diff: NEW (didn't hold last quarter), +X% add, -X% trim, blank if unchanged.
-                  // Threshold ≥5% to surface meaningful change (matches CLAUDE.md §6.1 spirit; spec says ≥10%).
-                  const prev = f.priorByCusip.get(h.cusip);
-                  let qDiffLabel: string | null = null;
-                  let qDiffColor = "text-neutral-500";
-                  if (!f.priorPeriod) {
-                    qDiffLabel = null;
-                  } else if (!prev) {
-                    qDiffLabel = "NEW";
-                    qDiffColor = "text-emerald-300 font-semibold";
-                  } else {
-                    const a = prev.shares ?? 0;
-                    const b = h.shares ?? 0;
-                    if (a > 0) {
-                      const ratio = (b - a) / a;
-                      if (ratio >= 0.05) {
-                        qDiffLabel = fmtPctCompact(ratio * 100);
-                        qDiffColor = ratio >= 0.5 ? "text-emerald-300 font-semibold" : "text-emerald-400/80";
-                      } else if (ratio <= -0.05) {
-                        qDiffLabel = fmtPctCompact(ratio * 100);
-                        qDiffColor = ratio <= -0.5 ? "text-red-400 font-semibold" : "text-red-400/80";
-                      }
-                    }
-                  }
-                  return (
-                  <tr key={`${h.cusip}-${i}`}>
-                    <td className="px-3 py-1 text-neutral-200 truncate max-w-[16ch]" title={`${h.issuer_name ?? ""} — CUSIP ${h.cusip}`}>{h.issuer_name ?? "—"}</td>
-                    <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">{fmtShares(h.shares)}</td>
-                    <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">{fmtUsd(h.value_usd)}</td>
-                    <td className="px-3 py-1 text-right tabular-nums">
-                      {pct != null ? (
-                        <span className={pct >= 10 ? "text-emerald-300" : pct >= 5 ? "text-emerald-400/70" : "text-neutral-400"}>
-                          {pct.toFixed(1)}%
-                        </span>
-                      ) : "—"}
-                    </td>
-                    <td className="px-3 py-1 text-right text-neutral-400 tabular-nums">
-                      {markPrice != null ? `$${markPrice.toFixed(2)}` : "—"}
-                    </td>
-                    <td className="px-3 py-1 text-right text-neutral-300 tabular-nums">
-                      {nowPrice != null ? `$${nowPrice.toFixed(2)}` : "—"}
-                    </td>
-                    <td className="px-3 py-1 text-right text-neutral-400 tabular-nums" title={costEst ? `Estimated from per-quarter VWAP, accumulating since ${costEst.first_seen_period}. Proxy — typically ±15-25% off true cost.` : "No cost-basis estimate yet (no usable VWAP)."}>
-                      {estCost != null ? `$${estCost.toFixed(2)}` : "—"}
-                    </td>
-                    <td className={`px-3 py-1 text-right tabular-nums ${vsCostColor}`}>
-                      {vsCostPct != null ? fmtPctCompact(vsCostPct) : "—"}
-                    </td>
-                    <td className={`px-3 py-1 text-right tabular-nums ${qDiffColor}`}
-                        title={f.priorPeriod ? `vs prior 13F (period ${f.priorPeriod}): prev shares ${(prev?.shares ?? 0).toLocaleString()}` : "no prior 13F to compare"}>
-                      {qDiffLabel ?? "—"}
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-              )}
-              changes={(<BoughtView f={f} />)}
-              sold={(<SoldView f={f} />)}
-            />
-          </div>
+
+              <FilerCardTabs
+                changesCount={f.news.length + f.adds.length}
+                soldCount={f.trims.length + f.exits.length}
+                current={
+                  <Table className="text-xs">
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="h-8 pl-4">Issuer</TableHead>
+                        <TableHead className="h-8 text-right">Value</TableHead>
+                        <TableHead className="h-8 text-right">% port</TableHead>
+                        <TableHead className="h-8 text-right">Now</TableHead>
+                        <TableHead className="h-8 text-right">Est. cost</TableHead>
+                        <TableHead className="h-8 text-right">P&amp;L</TableHead>
+                        <TableHead className="h-8 pr-4 text-right">Δ sh</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {f.positions.map((h, i) => {
+                        const pct = f.totalValue > 0 && h.value_usd != null ? (h.value_usd / f.totalValue) * 100 : null;
+                        const markPrice = h.value_usd != null && h.shares && h.shares > 0 ? h.value_usd / h.shares : null;
+                        const nowPrice = h.ticker ? prices[h.ticker] ?? null : null;
+                        // Estimated cost basis from filer_position_cost (proxy via per-quarter VWAP)
+                        const costEst = h.ticker ? costs[`${f.cik}|${h.ticker}`] : undefined;
+                        const estCost = costEst?.estimated_cost_basis ?? null;
+                        const vsCostPct = nowPrice != null && estCost != null && estCost > 0
+                          ? ((nowPrice - estCost) / estCost) * 100
+                          : null;
+                        // Δ shares vs prior 13F: NEW, +X% add, -X% trim, blank if within ±5%.
+                        const prev = f.priorByCusip.get(h.cusip);
+                        let qDiff: { label: string; cls: string } | null = null;
+                        if (f.priorPeriod) {
+                          if (!prev) {
+                            qDiff = { label: "NEW", cls: "font-medium text-positive" };
+                          } else {
+                            const a = prev.shares ?? 0;
+                            const b = h.shares ?? 0;
+                            if (a > 0) {
+                              const ratio = (b - a) / a;
+                              if (ratio >= 0.05) qDiff = { label: fmtPctCompact(ratio * 100), cls: cn("text-positive", ratio >= 0.5 && "font-medium") };
+                              else if (ratio <= -0.05) qDiff = { label: fmtPctCompact(ratio * 100), cls: cn("text-negative", ratio <= -0.5 && "font-medium") };
+                            }
+                          }
+                        }
+                        return (
+                          <TableRow key={`${h.cusip}-${i}`}>
+                            <TableCell className={cn(cell, "max-w-40 pl-4")}>
+                              <div className="flex flex-col leading-tight">
+                                <span className="truncate" title={`${h.issuer_name ?? ""} — CUSIP ${h.cusip}`}>{h.issuer_name ?? "—"}</span>
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  {h.ticker ?? ""}{h.ticker ? " · " : ""}{fmtShares(h.shares)} sh
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className={cn(cell, "text-right")}>
+                              <div className="flex flex-col leading-tight tabular-nums">
+                                <span>{fmtUsd(h.value_usd)}</span>
+                                <span className="font-mono text-[10px] text-muted-foreground" title="Quarter-end mark per share — NOT the filer's entry price">
+                                  {markPrice != null ? `$${markPrice.toFixed(2)}/sh` : ""}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className={cn(cell, "text-right tabular-nums", pct != null && pct >= 10 ? "font-medium text-foreground" : "text-muted-foreground")}>
+                              {pct != null ? `${pct.toFixed(1)}%` : "—"}
+                            </TableCell>
+                            <TableCell className={cn(cell, "text-right tabular-nums")}>
+                              {nowPrice != null ? `$${nowPrice.toFixed(2)}` : "—"}
+                            </TableCell>
+                            <TableCell
+                              className={cn(cell, "text-right text-muted-foreground tabular-nums")}
+                              title={costEst ? `Estimated from per-quarter VWAP, accumulating since ${costEst.first_seen_period}. Proxy — typically ±15-25% off true cost.` : "No cost-basis estimate yet (no usable VWAP)."}
+                            >
+                              {estCost != null ? `$${estCost.toFixed(2)}` : "—"}
+                            </TableCell>
+                            <TableCell className={cn(cell, "text-right tabular-nums", vsCostPct == null ? "text-muted-foreground" : vsCostPct >= 0 ? "text-positive" : "text-negative")}>
+                              {vsCostPct != null ? fmtPctCompact(vsCostPct) : "—"}
+                            </TableCell>
+                            <TableCell
+                              className={cn(cell, "pr-4 text-right tabular-nums", qDiff?.cls ?? "text-muted-foreground")}
+                              title={f.priorPeriod ? `vs prior 13F (period ${f.priorPeriod}): prev shares ${(prev?.shares ?? 0).toLocaleString()}` : "no prior 13F to compare"}
+                            >
+                              {qDiff?.label ?? "—"}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                }
+                changes={<BoughtView f={f} />}
+                sold={<SoldView f={f} />}
+              />
+            </Card>
           );
         })}
       </div>

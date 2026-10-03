@@ -1,8 +1,22 @@
+import { SparklesIcon } from "lucide-react";
 import { supabaseServer } from "@/lib/supabase";
+import { filerInfo, tier } from "@/lib/filers";
+import { PageHeader } from "@/components/app/page-header";
+import { TableCard } from "@/components/app/table-card";
+import { DateCell, SecLink } from "@/components/app/cells";
+import { Badge } from "@/components/ui/badge";
+import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export const dynamic = "force-dynamic";
-import { daysAgo, shortDate } from "@/lib/format";
-import { filerInfo, tier } from "@/lib/filers";
 
 // Corporate events — 8-K material events (M&A, leadership changes, big contracts,
 // strategic investments). Split out of the old Events page into its own tab.
@@ -41,13 +55,6 @@ function describeItems(itemsStr: string): { labels: string[]; priority: boolean 
   return { labels, priority };
 }
 
-// Left border tier color for corporate-strategic rows (NVIDIA, Microsoft, etc.)
-function tierBorderClass(t: 0 | 1 | 2): string {
-  if (t === 2) return "border-l-2 border-l-amber-500";
-  if (t === 1) return "border-l-2 border-l-sky-500";
-  return "border-l-2 border-l-transparent";
-}
-
 async function fetch8Ks(): Promise<Event8K[]> {
   const sb = supabaseServer();
   const { data, error } = await sb
@@ -68,89 +75,118 @@ async function fetch8Ks(): Promise<Event8K[]> {
   }));
 }
 
+// Left accent for filer type: amber = activist, blue = corporate strategic.
+const ACCENT = { 2: "bg-warning", 1: "bg-info", 0: "" } as const;
+
 export default async function CorporateEventsPage() {
   const eightKs = await fetch8Ks();
 
   return (
-    <div className="max-w-7xl mx-auto space-y-10">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Corporate events</h1>
-        <p className="mt-2 text-sm text-neutral-400 max-w-3xl">
-          8-K filings — the &ldquo;something happened&rdquo; disclosures a company must file within 4 business
-          days: M&amp;A, leadership changes, big contracts, strategic investments. Filtered to the
-          high-signal item numbers (1.01, 2.01, 5.02, 8.01). Rows from corporate-strategic filers
-          (NVIDIA, Microsoft, …) get the sky-blue bar — those are most worth watching.
-        </p>
-      </header>
+    <div className="flex flex-col gap-8">
+      <PageHeader
+        title="Corporate events"
+        description={
+          <>
+            8-K filings — the &ldquo;something happened&rdquo; disclosures a company must file within four
+            business days: M&amp;A, leadership changes, big contracts, strategic investments. High-signal
+            item numbers (1.01, 2.01, 5.02, 8.01) are highlighted.
+          </>
+        }
+        meta={
+          <>
+            <span>
+              <span className="font-medium text-foreground tabular-nums">{eightKs.length}</span> most recent 8-Ks
+            </span>
+            <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-info" />corporate strategic</span>
+            <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-warning" />activist</span>
+          </>
+        }
+      />
 
-      <section>
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
-          8-K material events ({eightKs.length})
-        </h2>
+      <TableCard
+        title="8-K material events"
+        description="Headlines are machine-generated summaries of the filing. Read the filing before acting on one."
+      >
         {eightKs.length === 0 ? (
-          <p className="text-sm text-neutral-500">No 8-K filings ingested yet.</p>
+          <Empty className="py-16">
+            <EmptyHeader>
+              <EmptyTitle>No 8-K filings ingested yet</EmptyTitle>
+            </EmptyHeader>
+          </Empty>
         ) : (
-          <div className="rounded-md border border-neutral-800">
-            <table className="w-full text-sm">
-              <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Filed</th>
-                  <th className="px-3 py-2 font-medium">Filer</th>
-                  <th className="px-3 py-2 font-medium">What happened</th>
-                  <th className="px-3 py-2 font-medium">Link</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {eightKs.map((e) => {
-                  const info = filerInfo(e.cik);
-                  const t = tier(e.cik);
-                  const desc = describeItems(e.items);
-                  return (
-                    <tr key={e.accession_number} className={`hover:bg-neutral-900/50 ${tierBorderClass(t)}`}>
-                      <td className="px-3 py-2 text-neutral-300 whitespace-nowrap align-top">
-                        <span className="block text-neutral-100 tabular-nums">{shortDate(e.filed_at)}</span>
-                        <span className="block text-neutral-500 text-xs">{daysAgo(e.filed_at)}</span>
-                      </td>
-                      <td className="px-3 py-2 align-top">
-                        <div className="text-neutral-200">{info?.entity ?? e.filer_name ?? e.cik}</div>
-                        {info?.manager && (
-                          <div className="text-xs text-neutral-500">{info.manager} · {info.category}</div>
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="pl-6">Filed</TableHead>
+                <TableHead>Filer</TableHead>
+                <TableHead>What happened</TableHead>
+                <TableHead className="pr-6 text-right">Source</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {eightKs.map((e) => {
+                const info = filerInfo(e.cik);
+                const t = tier(e.cik);
+                const desc = describeItems(e.items);
+                return (
+                  <TableRow key={e.accession_number} className="align-top">
+                    <TableCell className="relative pl-6 align-top">
+                      {t > 0 && <span className={`absolute inset-y-2 left-0 w-0.5 rounded-full ${ACCENT[t]}`} aria-hidden />}
+                      <DateCell iso={e.filed_at} />
+                    </TableCell>
+                    <TableCell className="max-w-60 align-top">
+                      <div className="flex flex-col leading-tight">
+                        <span className="truncate">{info?.entity ?? e.filer_name ?? e.cik}</span>
+                        {(info?.manager || info?.category) && (
+                          <span className="truncate text-xs text-muted-foreground">
+                            {[info?.manager, info?.category?.replace("_", " ")].filter(Boolean).join(" · ")}
+                          </span>
                         )}
-                        {!info?.manager && info?.category && (
-                          <div className="text-xs text-neutral-500">{info.category}</div>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 align-top max-w-xl">
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-2xl align-top whitespace-normal">
+                      <div className="flex flex-col gap-1.5">
                         {e.summary ? (
-                          <div className="text-sm text-neutral-200">{e.summary}</div>
+                          <p className="text-pretty">
+                            {e.summary}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <SparklesIcon className="ml-1.5 inline size-3 text-muted-foreground" aria-label="Auto-summary" />
+                              </TooltipTrigger>
+                              <TooltipContent>Auto-summary of the filing — may be wrong. Read the 8-K.</TooltipContent>
+                            </Tooltip>
+                          </p>
                         ) : (
-                          <div className="text-sm text-neutral-500 italic">Summary pending — see items below.</div>
+                          <p className="text-muted-foreground italic">No summary yet — see the item codes.</p>
                         )}
-                        <div className="mt-1 text-xs text-neutral-500">
-                          Items: {desc.labels.map((label, i) => {
+                        <div className="flex flex-wrap gap-1">
+                          {desc.labels.map((label) => {
                             const code = label.split(" ")[0];
                             return (
-                              <span key={i}>
-                                {i > 0 && " · "}
-                                <span className={ITEM_PRIORITY.has(code) ? "text-emerald-400/80" : ""} title={label}>{code}</span>
-                              </span>
+                              <Tooltip key={label}>
+                                <TooltipTrigger asChild>
+                                  <Badge
+                                    variant={ITEM_PRIORITY.has(code) ? "brand" : "muted"}
+                                    className="cursor-help rounded-sm px-1.5 font-mono text-[11px]"
+                                  >
+                                    {code}
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent>{label}</TooltipContent>
+                              </Tooltip>
                             );
                           })}
                         </div>
-                      </td>
-                      <td className="px-3 py-2 align-top">
-                        {e.primary_doc_url ? (
-                          <a href={e.primary_doc_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">sec.gov ↗</a>
-                        ) : <span className="text-neutral-600">—</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="pr-6 text-right align-top"><SecLink href={e.primary_doc_url} /></TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         )}
-      </section>
+      </TableCard>
     </div>
   );
 }

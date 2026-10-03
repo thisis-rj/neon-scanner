@@ -1,7 +1,19 @@
 import { supabaseServer } from "@/lib/supabase";
+import { filerInfo, allFilers } from "@/lib/filers";
+import { fmtUsd } from "@/lib/format";
+import { PageHeader } from "@/components/app/page-header";
+import { TableCard } from "@/components/app/table-card";
+import { ThirteenFDelayNote } from "@/components/app/cells";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
-import { filerInfo, allFilers } from "@/lib/filers";
 
 // Stock-level view: pivot of holdings_13f by issuer (CUSIP).
 // Tells you, for each stock, which tracked funds own it and how much.
@@ -127,122 +139,82 @@ async function fetchAggregated(): Promise<{ stocks: StockRow[]; totalFunds: numb
   return { stocks, totalFunds };
 }
 
-function fmtUsd(n: number): string {
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
-  if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
-  return `$${n.toFixed(0)}`;
-}
-
-function fmtShares(n: number): string {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(0)}K`;
-  return n.toLocaleString();
-}
-
 export default async function StocksPage() {
   const { stocks, totalFunds } = await fetchAggregated();
   // Surface only stocks held by ≥2 funds — that's where confluence starts.
   const confluence = stocks.filter((s) => s.n_funds >= 2).slice(0, 100);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Stocks — by tracked-fund confluence</h1>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          <div className="rounded-md border border-neutral-800 p-3">
-            <div className="text-neutral-400 font-medium uppercase tracking-wide mb-2">What this shows</div>
-            <ul className="space-y-1 text-neutral-300">
-              <li>One row per stock</li>
-              <li>How many of our {totalFunds} tracked funds hold it</li>
-              <li>Combined position size</li>
-            </ul>
-          </div>
-          <div className="rounded-md border border-neutral-800 p-3">
-            <div className="text-neutral-400 font-medium uppercase tracking-wide mb-2">Sorted by</div>
-            <ul className="space-y-1 text-neutral-300">
-              <li>Number of funds holding (desc)</li>
-              <li>Then by total $ exposure</li>
-              <li>Only stocks with ≥2 funds shown</li>
-            </ul>
-          </div>
-          <div className="rounded-md border border-neutral-800 p-3">
-            <div className="text-neutral-400 font-medium uppercase tracking-wide mb-2">Avg price column</div>
-            <ul className="space-y-1 text-neutral-300">
-              <li>Total $ value / total shares</li>
-              <li>= quarter-end market price</li>
-              <li><span className="text-amber-400">Not actual entry price</span></li>
-            </ul>
-          </div>
-        </div>
-      </header>
+    <div className="flex flex-col gap-8">
+      <PageHeader
+        title="Stocks by tracked-fund confluence"
+        description={`One row per stock: how many of the ${totalFunds} tracked funds hold it, and their combined position. Sorted by number of funds, then total dollars. Only stocks held by 2+ funds are shown.`}
+        meta={
+          <>
+            <span>
+              <span className="font-medium text-foreground tabular-nums">{confluence.length}</span> of{" "}
+              <span className="tabular-nums">{stocks.length.toLocaleString()}</span> issuers
+            </span>
+            <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-warning" />held by an activist</span>
+            <ThirteenFDelayNote />
+          </>
+        }
+      />
 
-      <section>
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
-          Confluence stocks ({confluence.length} of {stocks.length} total issuers)
-        </h2>
-        <div className="rounded-md border border-neutral-800">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
-              <tr>
-                <th className="px-3 py-2 font-medium">Issuer</th>
-                <th className="px-3 py-2 font-medium text-right">% funds</th>
-                <th className="px-3 py-2 font-medium text-right">Funds</th>
-                <th className="px-3 py-2 font-medium text-right">Total value</th>
-                <th className="px-3 py-2 font-medium text-right">Avg price</th>
-                <th className="px-3 py-2 font-medium">First held</th>
-                <th className="px-3 py-2 font-medium">Top holders</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-800">
-              {confluence.map((s) => {
-                const hasActivist = s.fund_list.some((f) => f.category === "activist");
-                const borderL = hasActivist
-                  ? "border-l-2 border-l-amber-500"
-                  : "border-l-2 border-l-transparent";
-                return (
-                  <tr key={s.cusip} className={`hover:bg-neutral-900/50 ${borderL}`}>
-                    <td className="px-3 py-2 align-top">
-                      <div className="text-neutral-100">{s.issuer_name}</div>
-                      <div className="text-xs text-neutral-500 font-mono">{s.cusip}</div>
-                    </td>
-                    <td className="px-3 py-2 text-right align-top">
-                      <span className="text-emerald-300 tabular-nums">{s.pct_funds.toFixed(0)}%</span>
-                    </td>
-                    <td className="px-3 py-2 text-right align-top text-neutral-200 tabular-nums">
-                      {s.n_funds}/{totalFunds}
-                    </td>
-                    <td className="px-3 py-2 text-right align-top text-neutral-200 tabular-nums">
-                      {fmtUsd(s.total_value_usd)}
-                    </td>
-                    <td className="px-3 py-2 text-right align-top text-neutral-300 tabular-nums">
-                      {s.avg_price_per_share != null ? `$${s.avg_price_per_share.toFixed(2)}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 align-top text-xs text-neutral-400">
-                      {s.earliest_period}
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <div className="text-xs text-neutral-400 space-y-0.5">
-                        {s.fund_list.slice(0, 3).map((f, i) => (
-                          <div key={i}>
-                            <span className={f.category === "activist" ? "text-amber-300" : "text-neutral-300"}>
-                              {f.manager ?? f.name}
-                            </span>{" "}
-                            <span className="text-neutral-500 tabular-nums">{fmtUsd(f.value)}</span>
-                          </div>
-                        ))}
-                        {s.fund_list.length > 3 && (
-                          <div className="text-neutral-500">+{s.fund_list.length - 3} more</div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <TableCard
+        title="Confluence stocks"
+        description="Avg price = total value ÷ total shares — the quarter-end market price, not anyone's entry price."
+      >
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="pl-6">Issuer</TableHead>
+              <TableHead className="text-right">Funds</TableHead>
+              <TableHead className="text-right">Total value</TableHead>
+              <TableHead className="text-right">Avg price</TableHead>
+              <TableHead>First held</TableHead>
+              <TableHead className="pr-6">Top holders</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {confluence.map((s) => {
+              const hasActivist = s.fund_list.some((f) => f.category === "activist");
+              return (
+                <TableRow key={s.cusip} className="align-top">
+                  <TableCell className="relative pl-6 align-top">
+                    {hasActivist && <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-warning" aria-hidden />}
+                    <div className="flex flex-col leading-tight">
+                      <span className="max-w-72 truncate">{s.issuer_name}</span>
+                      <span className="font-mono text-[11px] text-muted-foreground">{s.cusip}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right align-top tabular-nums">
+                    <span className="font-medium">{s.n_funds}</span>
+                    <span className="text-muted-foreground">/{totalFunds}</span>
+                    <div className="text-[11px] text-muted-foreground">{s.pct_funds.toFixed(0)}%</div>
+                  </TableCell>
+                  <TableCell className="text-right align-top tabular-nums">{fmtUsd(s.total_value_usd)}</TableCell>
+                  <TableCell className="text-right align-top text-muted-foreground tabular-nums">
+                    {s.avg_price_per_share != null ? `$${s.avg_price_per_share.toFixed(2)}` : "—"}
+                  </TableCell>
+                  <TableCell className="align-top font-mono text-[11px] text-muted-foreground">{s.earliest_period}</TableCell>
+                  <TableCell className="pr-6 align-top">
+                    <ul className="flex flex-col gap-0.5 text-xs">
+                      {s.fund_list.slice(0, 3).map((f, i) => (
+                        <li key={i} className="flex items-baseline gap-2">
+                          <span className={f.category === "activist" ? "text-warning" : undefined}>{f.manager ?? f.name}</span>
+                          <span className="text-muted-foreground tabular-nums">{fmtUsd(f.value)}</span>
+                        </li>
+                      ))}
+                      {s.fund_list.length > 3 && <li className="text-muted-foreground">+{s.fund_list.length - 3} more</li>}
+                    </ul>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableCard>
     </div>
   );
 }

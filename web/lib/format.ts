@@ -51,3 +51,32 @@ export function daysAgo(iso: string): string {
   if (days < 365) return `${Math.floor(days / 30)}mo ago`;
   return `${Math.floor(days / 365)}y ago`;
 }
+
+// ── Number formatting (shared by every table) ──────────────────────────────
+
+/** $1.2T · $3.4B · $8.5M · $42M · $310K · $950. Null → "—". */
+export function fmtUsd(n: number | null | undefined): string {
+  if (n == null) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e12) return `$${(n / 1e12).toFixed(1)}T`;
+  if (a >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+  if (a >= 1e7) return `$${(n / 1e6).toFixed(0)}M`;
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `$${(n / 1e3).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
+}
+
+/** 1.2M · 45K · 950. Null → "—". */
+export function fmtShares(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return n.toLocaleString();
+}
+
+/** "+12.3%" / "-4.0%". `fraction` = input is 0.123 rather than 12.3. */
+export function fmtSignedPct(v: number | null | undefined, fraction = false): string {
+  if (v == null) return "—";
+  const pct = fraction ? v * 100 : v;
+  return `${pct > 0 ? "+" : ""}${pct.toFixed(1)}%`;
+}

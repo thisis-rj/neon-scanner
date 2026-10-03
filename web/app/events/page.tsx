@@ -1,7 +1,20 @@
 import { supabaseServer } from "@/lib/supabase";
+import { fmtShares, fmtUsd } from "@/lib/format";
+import { PageHeader } from "@/components/app/page-header";
+import { TableCard } from "@/components/app/table-card";
+import { DateCell, SecLink, Ticker } from "@/components/app/cells";
+import { Badge } from "@/components/ui/badge";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 export const dynamic = "force-dynamic";
-import { daysAgo, shortDate } from "@/lib/format";
 
 // Clusters: the universe-wide insider-buy signal (3+ insiders buying the same US
 // company inside a 30-day window, NOT limited to tracked filers) plus notable
@@ -151,13 +164,6 @@ async function fetchNotableSales(): Promise<EventForm4[]> {
     .slice(0, 30);
 }
 
-function fmtShares(n: number | null): string {
-  if (n == null) return "—";
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-  return n.toLocaleString();
-}
-
 export default async function ClustersPage() {
   const [clusters, notableSales] = await Promise.all([
     fetchInsiderClusters(),
@@ -165,143 +171,144 @@ export default async function ClustersPage() {
   ]);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-10">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Clusters</h1>
-        <p className="mt-2 text-sm text-neutral-400 max-w-3xl">
-          Universe-wide insider signal: US companies where{" "}
-          <strong className="text-neutral-200">3+ different insiders</strong> (officers, directors, or
-          10%+ holders) bought their own stock inside a 30-day window — <em>not</em> limited to the
-          tracked filers. Below that, notable insider <em>sells</em> (≥ $5M) for context.
-        </p>
-      </header>
+    <div className="flex flex-col gap-8">
+      <PageHeader
+        title="Clusters"
+        description={
+          <>
+            US companies where <span className="text-foreground">3+ different insiders</span> — officers,
+            directors or 10%+ holders — bought their own stock inside a 30-day window. Universe-wide, not
+            limited to tracked filers. Large insider sales are listed below for context.
+          </>
+        }
+        meta={
+          <>
+            <span>
+              <span className="font-medium text-foreground tabular-nums">{clusters.length}</span> buy clusters
+            </span>
+            <span>
+              <span className="font-medium text-foreground tabular-nums">{notableSales.length}</span> sales ≥ $5M
+            </span>
+          </>
+        }
+      />
 
-      <section>
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
-          Insider buy clusters — 3+ insiders, last 30 days ({clusters.length})
-        </h2>
-        <p className="text-xs text-neutral-500 mb-3">
-          Universe-wide signal: stocks where 3+ different officers/directors/10%+ holders bought their own company&apos;s shares in a 30-day window. Historically generates 6-10% annual alpha on small/mid-caps (Lakonishok-Lee). Earliest column = first buy in the window; cluster &quot;builds&quot; from there.
-        </p>
+      <TableCard
+        title="Insider buy clusters · last 30 days"
+        description="Historically associated with 6–10% annual excess return on small and mid caps (Lakonishok-Lee) — a heuristic, not a forecast. The date range starts at the first buy in the window."
+      >
         {clusters.length === 0 ? (
-          <p className="text-sm text-neutral-500">
-            No clusters yet. The universe-wide Form 4 ingester (<code className="text-neutral-300">python -m ingest.form4_universe</code>) needs to run first — backfilling 60 days takes ~3-4 hours. Once data is loaded, clusters will surface here automatically.
-          </p>
+          <Empty className="py-16">
+            <EmptyHeader>
+              <EmptyTitle>No clusters in the last 30 days</EmptyTitle>
+              <EmptyDescription>
+                If this persists, the universe-wide Form 4 ingester may not have run —{" "}
+                <code className="font-mono text-xs">python -m ingest.form4_universe</code> (a 60-day
+                backfill takes ~3–4 hours).
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
-          <div className="rounded-md border border-neutral-800">
-            <table className="w-full text-sm">
-              <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
-                <tr>
-                  <th className="px-3 py-2 font-medium">Issuer</th>
-                  <th className="px-3 py-2 font-medium text-right">Buyers</th>
-                  <th className="px-3 py-2 font-medium text-right">Total value</th>
-                  <th className="px-3 py-2 font-medium">Date range</th>
-                  <th className="px-3 py-2 font-medium">Top buyers</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {clusters.slice(0, 30).map((c) => (
-                  <tr key={c.issuer_cik} className="hover:bg-neutral-900/50 border-l-2 border-l-emerald-500">
-                    <td className="px-3 py-2 align-top">
-                      <div className="text-neutral-100">{c.issuer_name ?? "?"}</div>
-                      {c.issuer_ticker && (
-                        <div className="text-xs text-neutral-500 font-mono">{c.issuer_ticker}</div>
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="pl-6">Issuer</TableHead>
+                <TableHead className="text-right">Buyers</TableHead>
+                <TableHead className="text-right">Total bought</TableHead>
+                <TableHead>Window</TableHead>
+                <TableHead className="pr-6">Buyers (price × shares)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {clusters.slice(0, 30).map((c) => (
+                <TableRow key={c.issuer_cik} className="align-top">
+                  <TableCell className="relative pl-6 align-top">
+                    <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-positive" aria-hidden />
+                    <div className="flex flex-col leading-tight">
+                      <span className="max-w-64 truncate" title={c.issuer_name ?? ""}>{c.issuer_name ?? "?"}</span>
+                      {c.issuer_ticker && <Ticker className="text-muted-foreground">{c.issuer_ticker}</Ticker>}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right align-top">
+                    <Badge variant="positive" className="font-mono tabular-nums">{c.n_buyers}</Badge>
+                  </TableCell>
+                  <TableCell className="text-right align-top tabular-nums">{fmtUsd(c.total_value)}</TableCell>
+                  <TableCell className="align-top font-mono text-[11px] text-muted-foreground tabular-nums">
+                    {c.earliest_date}
+                    {c.earliest_date !== c.latest_date && <> → {c.latest_date}</>}
+                  </TableCell>
+                  <TableCell className="pr-6 align-top whitespace-normal">
+                    <ul className="flex flex-col gap-0.5 text-xs">
+                      {c.buyers.slice(0, 4).map((b, i) => (
+                        <li key={i} className="flex flex-wrap items-baseline gap-x-1.5">
+                          <span>{b.name}</span>
+                          {b.title && <span className="text-muted-foreground">{b.title.slice(0, 25)}</span>}
+                          <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                            ${b.price.toFixed(2)} × {fmtShares(b.shares)}
+                          </span>
+                        </li>
+                      ))}
+                      {c.buyers.length > 4 && (
+                        <li className="text-muted-foreground">+{c.buyers.length - 4} more</li>
                       )}
-                    </td>
-                    <td className="px-3 py-2 text-right align-top">
-                      <span className={c.n_buyers >= 5 ? "text-emerald-300 text-base font-medium" : "text-emerald-400 text-base"}>
-                        {c.n_buyers}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right align-top text-neutral-200 tabular-nums">
-                      ${c.total_value >= 1e6 ? `${(c.total_value / 1e6).toFixed(1)}M` : `${(c.total_value / 1e3).toFixed(0)}K`}
-                    </td>
-                    <td className="px-3 py-2 align-top text-xs text-neutral-400">
-                      {c.earliest_date}
-                      {c.earliest_date !== c.latest_date && (
-                        <> → {c.latest_date}</>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 align-top">
-                      <div className="text-xs text-neutral-400 space-y-0.5">
-                        {c.buyers.slice(0, 4).map((b, i) => (
-                          <div key={i}>
-                            <span className="text-neutral-300">{b.name}</span>
-                            {b.title && <span className="text-neutral-500"> ({b.title.slice(0, 25)})</span>}
-                            <span className="text-neutral-500 tabular-nums"> · ${b.price.toFixed(2)} × {b.shares >= 1000 ? `${(b.shares / 1000).toFixed(0)}K` : b.shares}</span>
-                          </div>
-                        ))}
-                        {c.buyers.length > 4 && (
-                          <div className="text-neutral-500">+{c.buyers.length - 4} more</div>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </ul>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
-      </section>
+      </TableCard>
 
-      <section>
-        <h2 className="text-sm font-medium uppercase tracking-wider text-neutral-400 mb-3">
-          Notable insider sales — Form 4 code &apos;S&apos;, ≥ $5M ({notableSales.length})
-        </h2>
-        <p className="text-xs text-neutral-500 mb-3">
-          Most insider sales are noise (taxes, 10b5-1 plans, diversification). These are the few large enough to matter — sales of ≥ $5M by named executives. Sales themselves are NOT a buy signal — they&apos;re context.
-        </p>
+      <TableCard
+        title="Notable insider sales · ≥ $5M"
+        description="Most insider sales are noise — taxes, 10b5-1 plans, diversification. These are the few large enough to note. A sale is context, not a signal."
+      >
         {notableSales.length === 0 ? (
-          <p className="text-sm text-neutral-500">No notable insider sales in current data.</p>
+          <Empty className="py-12">
+            <EmptyHeader>
+              <EmptyTitle>No insider sales of $5M or more in current data</EmptyTitle>
+            </EmptyHeader>
+          </Empty>
         ) : (
-          <div className="rounded-md border border-neutral-800">
-            <table className="w-full text-sm">
-              <thead className="bg-neutral-900 text-left text-xs uppercase tracking-wider text-neutral-400">
-                <tr>
-                  <th className="px-3 py-2 font-medium">When</th>
-                  <th className="px-3 py-2 font-medium">Reporter</th>
-                  <th className="px-3 py-2 font-medium">Issuer</th>
-                  <th className="px-3 py-2 font-medium">Ticker</th>
-                  <th className="px-3 py-2 font-medium text-right">Shares</th>
-                  <th className="px-3 py-2 font-medium text-right">Price</th>
-                  <th className="px-3 py-2 font-medium text-right">Value</th>
-                  <th className="px-3 py-2 font-medium">Link</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-800">
-                {notableSales.map((e, i) => {
-                  const value = (e.shares ?? 0) * (e.price ?? 0);
-                  return (
-                  <tr key={`${e.filing_id}-${i}`} className="hover:bg-neutral-900/50">
-                    <td className="px-3 py-2 text-neutral-300 whitespace-nowrap">
-                      <span className="block text-neutral-100 tabular-nums">{shortDate(e.transaction_date)}</span>
-                      <span className="block text-neutral-500 text-xs">{daysAgo(e.transaction_date)}</span>
-                    </td>
-                    <td className="px-3 py-2 text-neutral-300">{e.reporter_name ?? "—"}</td>
-                    <td className="px-3 py-2 text-neutral-300">{e.issuer_name ?? "—"}</td>
-                    <td className="px-3 py-2 text-neutral-200 font-mono">{e.ticker ?? "—"}</td>
-                    <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">{fmtShares(e.shares)}</td>
-                    <td className="px-3 py-2 text-right text-neutral-300 tabular-nums">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="pl-6">When</TableHead>
+                <TableHead>Reporter</TableHead>
+                <TableHead>Issuer</TableHead>
+                <TableHead className="text-right">Shares</TableHead>
+                <TableHead className="text-right">Price</TableHead>
+                <TableHead className="text-right">Value</TableHead>
+                <TableHead className="pr-6 text-right">Source</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {notableSales.map((e, i) => {
+                const value = (e.shares ?? 0) * (e.price ?? 0);
+                return (
+                  <TableRow key={`${e.filing_id}-${i}`}>
+                    <TableCell className="pl-6"><DateCell iso={e.transaction_date} /></TableCell>
+                    <TableCell className="max-w-56 truncate">{e.reporter_name ?? "—"}</TableCell>
+                    <TableCell className="max-w-72">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate">{e.issuer_name ?? "—"}</span>
+                        {e.ticker && <Ticker className="text-muted-foreground">{e.ticker}</Ticker>}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{fmtShares(e.shares)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
                       {e.price != null ? `$${e.price.toFixed(2)}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <span className={value >= 50_000_000 ? "text-red-300" : "text-red-400/70"}>
-                        ${value >= 1e9 ? `${(value/1e9).toFixed(1)}B` : value >= 1e6 ? `${(value/1e6).toFixed(0)}M` : `${(value/1e3).toFixed(0)}K`}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      {e.primary_doc_url ? (
-                        <a href={e.primary_doc_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">sec.gov ↗</a>
-                      ) : <span className="text-neutral-600">—</span>}
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-negative">{fmtUsd(value)}</TableCell>
+                    <TableCell className="pr-6 text-right"><SecLink href={e.primary_doc_url} /></TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         )}
-      </section>
+      </TableCard>
     </div>
   );
 }
