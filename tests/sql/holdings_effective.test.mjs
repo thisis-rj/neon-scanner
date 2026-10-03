@@ -49,7 +49,7 @@ async function rows(pg, filingId, list) {
 }
 async function effective(pg, cik = "1", period = "2026-06-30") {
   const r = await pg.query(
-    `select filing_id, ticker, shares from holdings_13f_effective where cik = $1 and period_of_report = $2 order by ticker, filing_id`,
+    `select filing_id, ticker, shares from holdings_13f_effective where cik = $1 and period_of_report = $2 order by ticker, filing_id, shares`,
     [cik, period],
   );
   return r.rows.map((x) => `${x.ticker}@${x.filing_id}:${x.shares}`);
@@ -91,6 +91,24 @@ test("NEW HOLDINGS adds to the original (the Berkshire case)", async () => {
   await filing(pg, { id: "n", filed: "2025-08-14", period: "2025-03-31", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
   await rows(pg, "n", [{ t: "SECRET" }]);
   assert.deepEqual(await effective(pg, "1", "2025-03-31"), ["AAPL@o:100", "KO@o:100", "SECRET@n:100"]);
+});
+
+test("NEW HOLDINGS that re-lists the whole original (the First Eagle case) adds only the genuinely new rows", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2026-08-05" });
+  await rows(pg, "o", [{ t: "NOV", sh: 836350 }, { t: "NOV", sh: 29848341 }, { t: "WCC", sh: 52748 }]);
+  await filing(pg, { id: "n", filed: "2026-08-24", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "n", [{ t: "NOV", sh: 836350 }, { t: "NOV", sh: 29848341 }, { t: "WCC", sh: 52748 }, { t: "NEW1", sh: 10 }]);
+  assert.deepEqual(await effective(pg), ["NEW1@n:10", "NOV@o:836350", "NOV@o:29848341", "WCC@o:52748"]);
+});
+
+test("a NEW HOLDINGS row with the same security but a different share count is kept", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2026-08-05" });
+  await rows(pg, "o", [{ t: "AAA", sh: 100 }]);
+  await filing(pg, { id: "n", filed: "2026-08-24", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "n", [{ t: "AAA", sh: 40 }]);
+  assert.deepEqual(await effective(pg), ["AAA@n:40", "AAA@o:100"]);
 });
 
 test("NEW HOLDINGS filed before a later RESTATEMENT is superseded by it", async () => {

@@ -17,7 +17,12 @@
 --           at least one holdings row (a filing whose table failed to parse
 --           never wipes out the quarter). amendment_type NULL on a 13F-HR/A
 --           (cover page unreadable) counts as RESTATEMENT.
---   extra = 13F-HR/A NEW HOLDINGS filed after the base (or with no base).
+--   extra = 13F-HR/A NEW HOLDINGS filed after the base (or with no base),
+--           minus any row that is an exact copy of a base row (same CUSIP,
+--           shares, put/call). Filers sometimes label a full re-list
+--           "NEW HOLDINGS": First Eagle Q2-2026 re-listed all 614 original
+--           rows plus 2 new ones; Akre Q1-2024 and ValueAct Q3-2024 did the
+--           same. Trusting the label would count those positions twice.
 --   rows  = base ∪ extra, minus option rows and PRN rows.
 --
 -- Additive only: two nullable columns, an index and a view. Old code keeps
@@ -49,9 +54,9 @@ base as (
   order by cik, period_of_report, filed_at desc, id desc
 ),
 effective_filings as (
-  select id from base
+  select id, null as base_id from base
   union all
-  select n.id
+  select n.id, b.id as base_id
   from thirteenf n
   left join base b on b.cik = n.cik and b.period_of_report = n.period_of_report
   where n.kind = 'NEW HOLDINGS'
@@ -61,10 +66,19 @@ select h.*
 from holdings_13f h
 join effective_filings e on e.id = h.filing_id
 where h.put_call is null
-  and coalesce(h.sh_type, 'SH') <> 'PRN';
+  and coalesce(h.sh_type, 'SH') <> 'PRN'
+  -- NEW HOLDINGS rows that merely repeat a base row are not new holdings.
+  and not exists (
+    select 1 from holdings_13f o
+    where e.base_id is not null
+      and o.filing_id = e.base_id
+      and o.cusip is not distinct from h.cusip
+      and o.shares is not distinct from h.shares
+      and o.put_call is not distinct from h.put_call
+  );
 
 comment on view holdings_13f_effective is
-  'Long equity 13F holdings per filer-quarter: latest original/restatement ∪ later NEW HOLDINGS amendments; excludes put/call and PRN rows. See migration 019.';
+  'Long equity 13F holdings per filer-quarter: latest original/restatement ∪ later NEW HOLDINGS amendments (rows not already in the base); excludes put/call and PRN rows. See migration 019.';
 
 -- Holdings page RPC: same signature and columns as migration 015, now reading
 -- the view. put_call is always null here (kept so the page contract is unchanged).

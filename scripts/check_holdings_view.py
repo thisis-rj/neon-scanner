@@ -10,7 +10,8 @@ Read-only. Run after `python -m ingest.migrate` (019) and
 Rule (schema/migrations/019_holdings_effective.sql), per (cik, period):
   base  = latest-filed 13F-HR or 13F-HR/A RESTATEMENT (NULL type counts as
           RESTATEMENT) that has at least one holdings row
-  extra = 13F-HR/A NEW HOLDINGS filed after the base, or with no base
+  extra = 13F-HR/A NEW HOLDINGS filed after the base, or with no base,
+          minus rows that copy a base row (same CUSIP, shares, put/call)
   rows  = base ∪ extra, minus put/call rows and PRN rows
 
 Exit 1 on any mismatch. Also reports amendments still missing a type and
@@ -28,7 +29,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-BERKSHIRE, OAKTREE = "0001067983", "0000949509"
+BERKSHIRE, OAKTREE, FIRST_EAGLE = "0001067983", "0000949509", "0001325447"
 
 
 def _supabase():
@@ -61,13 +62,13 @@ def load(args):
     sb = _supabase()
     filings = [f for ft in ("13F-HR", "13F-HR/A")
                for f in _fetch_all(sb, "filings_raw", "id,cik,form_type,filed_at,period_of_report,amendment_type", form_type=ft)]
-    raw = _fetch_all(sb, "holdings_13f", "id,filing_id,put_call,sh_type")
+    raw = _fetch_all(sb, "holdings_13f", "id,filing_id,cusip,shares,put_call,sh_type")
     eff = _fetch_all(sb, "holdings_13f_effective", "id,filing_id,put_call,sh_type")
     return filings, raw, eff
 
 
 def expected_filings(filings, raw_rows):
-    """(cik, period) → set of filing ids the view should draw rows from."""
+    """(cik, period) → (base filing id or None, [NEW HOLDINGS filing ids added to it])."""
     has_rows = {r["filing_id"] for r in raw_rows}
     by_q = defaultdict(list)
     for f in filings:
@@ -81,9 +82,8 @@ def expected_filings(filings, raw_rows):
             return "NEW HOLDINGS" if f.get("amendment_type") == "NEW HOLDINGS" else "RESTATEMENT"
         bases = sorted((f for f in fs if kind(f) != "NEW HOLDINGS"), key=lambda f: (f["filed_at"], f["id"]))
         base = bases[-1] if bases else None
-        ids = {base["id"]} if base else set()
-        ids |= {f["id"] for f in fs if kind(f) == "NEW HOLDINGS" and (base is None or f["filed_at"] > base["filed_at"])}
-        out[q] = ids
+        extras = [f["id"] for f in fs if kind(f) == "NEW HOLDINGS" and (base is None or f["filed_at"] > base["filed_at"])]
+        out[q] = (base["id"] if base else None, extras)
     return out
 
 
@@ -92,9 +92,15 @@ def check(filings, raw, eff) -> int:
     by_id = {f["id"]: f for f in filings}
     expect = expected_filings(filings, raw)
 
-    # Expected row count per filing = its long-equity rows.
-    long_rows = Counter(r["filing_id"] for r in raw
-                        if not r.get("put_call") and (r.get("sh_type") or "SH") != "PRN")
+    def is_long(r):
+        return not r.get("put_call") and (r.get("sh_type") or "SH") != "PRN"
+
+    def key(r):
+        return (r.get("cusip"), r.get("shares"), r.get("put_call"))
+
+    rows_by_filing = defaultdict(list)
+    for r in raw:
+        rows_by_filing[r["filing_id"]].append(r)
     got_rows = Counter(r["filing_id"] for r in eff)
 
     bad_rows = [r for r in eff if r.get("put_call") or r.get("sh_type") == "PRN"]
@@ -102,8 +108,15 @@ def check(filings, raw, eff) -> int:
         problems += 1
         print(f"FAIL view contains {len(bad_rows)} option/PRN rows")
 
-    for (cik, period), ids in sorted(expect.items()):
-        want = sum(long_rows[i] for i in ids)
+    copied_total = 0
+    for (cik, period), (base_id, extras) in sorted(expect.items()):
+        ids = ({base_id} if base_id else set()) | set(extras)
+        base_keys = {key(r) for r in rows_by_filing.get(base_id, [])}
+        want = sum(1 for r in rows_by_filing.get(base_id, []) if is_long(r))
+        for x in extras:
+            fresh = [r for r in rows_by_filing[x] if is_long(r) and key(r) not in base_keys]
+            copied_total += sum(1 for r in rows_by_filing[x] if is_long(r)) - len(fresh)
+            want += len(fresh)
         have = sum(got_rows[i] for i in ids)
         stray = {i for i in got_rows if by_id.get(i, {}).get("cik") == cik
                  and by_id.get(i, {}).get("period_of_report") == period} - ids
@@ -112,6 +125,7 @@ def check(filings, raw, eff) -> int:
             print(f"FAIL {cik} {period}: expected {want} rows from {sorted(ids)}, view has {have}"
                   + (f", plus rows from superseded filings {sorted(stray)}" if stray else ""))
 
+    print(f"NEW HOLDINGS rows that only copied the original (not counted): {copied_total}")
     untyped = [f for f in filings if f["form_type"] == "13F-HR/A" and not f.get("amendment_type")]
     amend = [f for f in filings if f["form_type"] == "13F-HR/A"]
     print(f"13F-HR/A filings: {len(amend)} ({Counter(f.get('amendment_type') for f in amend)})")
@@ -124,8 +138,10 @@ def check(filings, raw, eff) -> int:
           f"prn={sum(1 for r in raw if r.get('sh_type') == 'PRN'):,} "
           f"sh_type_null={sum(1 for r in raw if not r.get('sh_type')):,}")
 
-    for label, cik, period in (("Berkshire", BERKSHIRE, "2025-03-31"), ("Oaktree", OAKTREE, "2026-03-31")):
-        ids = expect.get((cik, period), set())
+    for label, cik, period in (("Berkshire", BERKSHIRE, "2025-03-31"), ("Oaktree", OAKTREE, "2026-03-31"),
+                               ("First Eagle", FIRST_EAGLE, "2026-06-30")):
+        base_id, extras = expect.get((cik, period), (None, []))
+        ids = ({base_id} if base_id else set()) | set(extras)
         kinds = sorted(f"{by_id[i]['form_type']}:{by_id[i].get('amendment_type') or '-'}" for i in ids)
         print(f"{label} {period}: {sum(got_rows[i] for i in ids)} effective rows from {kinds}")
 
