@@ -23,6 +23,8 @@
 --           "NEW HOLDINGS": First Eagle Q2-2026 re-listed all 614 original
 --           rows plus 2 new ones; Akre Q1-2024 and ValueAct Q3-2024 did the
 --           same. Trusting the label would count those positions twice.
+--           A NEW HOLDINGS amendment repeating >= half of the base's
+--           securities (and at least 5) is a re-list and counts as RESTATEMENT.
 --   rows  = base ∪ extra, minus option rows and PRN rows.
 --
 -- Additive only: two nullable columns, an index and a view. Old code keeps
@@ -47,9 +49,36 @@ with thirteenf as (
   where f.form_type in ('13F-HR', '13F-HR/A')
     and exists (select 1 from holdings_13f h where h.filing_id = f.id)
 ),
+base0 as (
+  select distinct on (cik, period_of_report) id, cik, period_of_report
+  from thirteenf
+  where kind in ('ORIGINAL', 'RESTATEMENT')
+  order by cik, period_of_report, filed_at desc, (kind = 'RESTATEMENT') desc,
+           accession_number desc, id desc
+),
+-- A "NEW HOLDINGS" amendment that repeats most of the base is a mislabelled
+-- full re-list: treat it as a RESTATEMENT so it replaces the quarter (a
+-- corrected share count then can't be added on top of the old one). In the
+-- 35 amendments on file, true NEW HOLDINGS repeat 0-1 base securities and
+-- re-lists repeat 99-100% (at least 8); the 5-security floor keeps a tiny
+-- filer's same-stock confidential lot from being misread as a re-list.
+classified as (
+  select t.id, t.cik, t.period_of_report, t.filed_at, t.accession_number,
+    case when t.kind = 'NEW HOLDINGS' and b0.id is not null and s.shared >= 5 and s.shared * 2 >= s.base_n
+         then 'RESTATEMENT' else t.kind end as kind
+  from thirteenf t
+  left join base0 b0 on b0.cik = t.cik and b0.period_of_report = t.period_of_report
+  left join lateral (
+    select
+      (select count(distinct o.cusip) from holdings_13f o where o.filing_id = b0.id) as base_n,
+      (select count(distinct n.cusip) from holdings_13f n
+        where n.filing_id = t.id
+          and n.cusip in (select o.cusip from holdings_13f o where o.filing_id = b0.id)) as shared
+  ) s on t.kind = 'NEW HOLDINGS' and b0.id is not null
+),
 base as (
   select distinct on (cik, period_of_report) id, cik, period_of_report, filed_at, accession_number
-  from thirteenf
+  from classified
   where kind in ('ORIGINAL', 'RESTATEMENT')
   -- filed_at is a date, so an original and its restatement can tie: the
   -- restatement wins, then the later accession number (never the random id).
@@ -60,7 +89,7 @@ effective_filings as (
   select id, cik, period_of_report, filed_at, accession_number, true as is_base from base
   union all
   select n.id, n.cik, n.period_of_report, n.filed_at, n.accession_number, false as is_base
-  from thirteenf n
+  from classified n
   left join base b on b.cik = n.cik and b.period_of_report = n.period_of_report
   where n.kind = 'NEW HOLDINGS'
     -- >= because filed_at is a date: a same-day NEW HOLDINGS still counts;

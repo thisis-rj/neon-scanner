@@ -236,3 +236,26 @@ test("second NEW HOLDINGS that re-lists the first one's rows doesn't double-coun
   await rows(pg, "n2", [{ t: "AAA", sh: 100 }, { t: "SECRET", sh: 10 }, { t: "NEW2", sh: 5 }]);
   assert.deepEqual(await effective(pg), ["AAA@o:100", "NEW2@n2:5", "SECRET@n1:10"]);
 });
+
+// Value: protects=a mislabelled full re-list ("NEW HOLDINGS" repeating >= half the base, >= 5 securities) replaces the quarter, so a corrected share count isn't added on top; fails_when=re-lists go back to being unioned with the base; why_new=the First Eagle test has only 2 securities and exact copies; seam=none
+test("NEW HOLDINGS that re-lists most of the base with a changed share count replaces the quarter", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2026-08-05" });
+  await rows(pg, "o", [{ t: "A1" }, { t: "A2" }, { t: "A3" }, { t: "A4" }, { t: "A5", sh: 100 }, { t: "A6" }]);
+  await filing(pg, { id: "n", filed: "2026-08-24", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "n", [{ t: "A1" }, { t: "A2" }, { t: "A3" }, { t: "A4" }, { t: "A5", sh: 150 }, { t: "A6" }, { t: "NEW1", sh: 7 }]);
+  assert.deepEqual(await effective(pg), [
+    "A1@n:100", "A2@n:100", "A3@n:100", "A4@n:100", "A5@n:150", "A6@n:100", "NEW1@n:7"]);
+});
+
+// Value: protects=a true NEW HOLDINGS amendment (confidential positions, shares <= 1 base security) still adds to a large base; fails_when=the re-list threshold is loosened so additive amendments replace the quarter (Berkshire 114 -> 4); why_new=the Berkshire test base has only 2 rows; seam=none
+test("NEW HOLDINGS sharing one security with a large base stays additive (Berkshire Q1-2025 shape)", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2025-05-15" });
+  await rows(pg, "o", [{ t: "B1" }, { t: "B2" }, { t: "B3" }, { t: "B4" }, { t: "B5" }, { t: "B6" }, { t: "B7" }, { t: "B8" }]);
+  await filing(pg, { id: "n", filed: "2025-08-14", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
+  await rows(pg, "n", [{ t: "B1", sh: 999 }, { t: "C1" }, { t: "C2" }, { t: "C3" }]);
+  const got = await effective(pg);
+  assert.equal(got.length, 12);
+  assert.ok(got.includes("B1@n:999") && got.includes("B1@o:100") && got.includes("C3@n:100"));
+});

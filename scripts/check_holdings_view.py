@@ -13,7 +13,8 @@ Rule (schema/migrations/023_holdings_effective.sql), per (cik, period):
           RESTATEMENT beats an original, then the later accession number wins
   extra = 13F-HR/A NEW HOLDINGS filed on or after the base date, or with no
           base, minus rows that copy a row of the base or of an earlier NEW
-          HOLDINGS amendment (same CUSIP, shares, put/call)
+          HOLDINGS amendment (same CUSIP, shares, put/call); a NEW HOLDINGS that repeats
+          >= half of the base's securities (and >= 5) is a re-list: RESTATEMENT
   rows  = base ∪ extra, minus put/call rows and PRN rows
 
 Exit 1 on any mismatch. Also reports amendments still missing a type and
@@ -76,13 +77,27 @@ def expected_filings(filings, raw_rows):
     for f in filings:
         if f["id"] in has_rows:
             by_q[(f["cik"], f["period_of_report"])].append(f)
+    cusips = defaultdict(set)
+    for r in raw_rows:
+        cusips[r["filing_id"]].add(r.get("cusip"))
+    order = lambda f, k: (f["filed_at"][:10], k(f) == "RESTATEMENT", f.get("accession_number") or "", f["id"])
     out = {}
     for q, fs in by_q.items():
-        def kind(f):
+        def declared(f):
             if f["form_type"] == "13F-HR":
                 return "ORIGINAL"
             return "NEW HOLDINGS" if f.get("amendment_type") == "NEW HOLDINGS" else "RESTATEMENT"
-        bases = sorted((f for f in fs if kind(f) != "NEW HOLDINGS"), key=lambda f: (f["filed_at"][:10], kind(f) == "RESTATEMENT", f.get("accession_number") or "", f["id"]))
+        b0 = max((f for f in fs if declared(f) != "NEW HOLDINGS"), key=lambda f: order(f, declared), default=None)
+
+        def kind(f):
+            # A NEW HOLDINGS that repeats >= half of the base's securities (and >= 5) is a re-list.
+            k = declared(f)
+            if k == "NEW HOLDINGS" and b0 is not None:
+                shared = len(cusips[f["id"]] & cusips[b0["id"]])
+                if shared >= 5 and shared * 2 >= len(cusips[b0["id"]]):
+                    return "RESTATEMENT"
+            return k
+        bases = sorted((f for f in fs if kind(f) != "NEW HOLDINGS"), key=lambda f: order(f, kind))
         base = bases[-1] if bases else None
         extras = [f["id"] for f in sorted(fs, key=lambda f: (f["filed_at"][:10], f.get("accession_number") or ""))
                   if kind(f) == "NEW HOLDINGS" and (base is None or f["filed_at"][:10] >= base["filed_at"][:10])]
