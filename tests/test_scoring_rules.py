@@ -115,3 +115,18 @@ def test_compute_signals_drops_scores_below_four():
     filings = [_filing("f1", "1", "2026-06-30", "2026-08-14")]
     holdings = [{"filing_id": "f1", "ticker": "BIG", "shares": 1000, "issuer_name": "BIG CO"}]
     assert compute_signals(AS_OF, filers, universe, filings, holdings, [], []) == []
+
+
+def test_same_period_points_merge_when_a_quarter_has_two_filings():
+    """Base filing + NEW HOLDINGS amendment for one quarter → one trajectory point."""
+    from ingest.scoring_rules import build_trajectories
+
+    f13f = {"A": [
+        {"id": "q1", "period_of_report": "2026-03-31", "filed_at": "2026-05-15T00:00:00"},
+        {"id": "base", "period_of_report": "2026-06-30", "filed_at": "2026-08-14T00:00:00"},
+        {"id": "nh", "period_of_report": "2026-06-30", "filed_at": "2026-08-30T00:00:00"},
+    ]}
+    holdings = {"q1": {"XYZ": 100}, "base": {"XYZ": 150}, "nh": {"XYZ": 50, "NEW": 10}}
+    traj = build_trajectories(f13f, holdings)
+    assert traj[("A", "XYZ")] == [("2026-03-31", 100, "2026-05-15"), ("2026-06-30", 200, "2026-08-30")]
+    assert traj[("A", "NEW")] == [("2026-06-30", 10, "2026-08-30")]

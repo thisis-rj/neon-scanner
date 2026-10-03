@@ -74,7 +74,9 @@ def main() -> None:
     universe_rows = paginated(sb, "tickers", "ticker,name,market_cap_usd")
     print(f"  universe: {len(universe_rows)} tickers", flush=True)
     filings = paginated(sb, "filings_raw", "id,cik,form_type,filed_at,period_of_report")
-    holding_rows = paginated(sb, "holdings_13f", "filing_id,ticker,shares,issuer_name")
+    # Effective long-equity rows only: amendments resolved, options and bond
+    # principal (PRN) excluded — see schema/migrations/019_holdings_effective.sql.
+    holding_rows = paginated(sb, "holdings_13f_effective", "filing_id,ticker,shares,issuer_name")
     insider_rows = paginated(sb, "insider_transactions", "issuer_ticker,reporter_cik,transaction_date,filed_at,reporter_name,value_usd")
     e13d_rows = paginated(sb, "events_13d", "ticker,cik,form_subtype,filing_id,issuer_name")
 

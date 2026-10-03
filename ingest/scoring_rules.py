@@ -93,14 +93,23 @@ def holdings_by_filing(holding_rows, name_to_ticker):
 
 
 def build_trajectories(f13f, holdings):
-    """(cik, ticker) → [(period, shares, filed_at), ...] in filing order."""
+    """(cik, ticker) → [(period, shares, filed_at), ...], one point per period.
+
+    A quarter can have rows from two filings (the base filing plus a NEW
+    HOLDINGS amendment); points for the same period are merged: shares
+    summed, latest filed_at kept.
+    """
     traj = {}
     for c, fs in f13f.items():
         for f in sorted(fs, key=lambda x: x.get("period_of_report") or x["filed_at"]):
+            period, filed = f.get("period_of_report") or f["filed_at"][:10], f["filed_at"][:10]
             for t, sh in holdings.get(f["id"], {}).items():
-                traj.setdefault((c, t), []).append(
-                    (f.get("period_of_report") or f["filed_at"][:10], sh, f["filed_at"][:10])
-                )
+                points = traj.setdefault((c, t), [])
+                if points and points[-1][0] == period:
+                    _, prev_sh, prev_filed = points[-1]
+                    points[-1] = (period, prev_sh + sh, max(prev_filed, filed))
+                else:
+                    points.append((period, sh, filed))
     return traj
 
 
