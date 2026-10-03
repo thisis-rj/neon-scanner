@@ -430,3 +430,203 @@ def compute_signals(
 
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored
+
+
+# ─── Fund flows (the /funds page) ───────────────────────────────────────
+#
+# One row per fund × stock × quarter pair: what the fund did to the stock
+# between two of its own consecutive 13F filings. No scoring here — the
+# counting (net funds, tier-weighted net, conviction, streak) happens in the
+# fund_flows() SQL function (migration 025) so every view counts the same way.
+#
+#   opened   absent in the earlier filing, present now
+#   added    split-adjusted shares up ≥ 10%
+#   trimmed  split-adjusted shares down ≥ 10%
+#   exited   present in the earlier filing, absent now
+#   (held — anything else — is not stored)
+#
+# Pairing (eng review D5): each fund's newest filing vs its previous filing,
+# so an early filer counts the day it files. A fund whose newest filing is
+# older than the previous reporting quarter has stopped filing and is left
+# out. A fund with a single filing has no baseline and records nothing.
+
+FLOW_CHANGE_THRESHOLD = 0.10
+FILING_DEADLINE_DAYS = 45
+
+
+def quarter_end_on_or_before(d: date) -> date:
+    """Latest calendar quarter end ≤ d."""
+    for month, day in ((12, 31), (9, 30), (6, 30), (3, 31)):
+        q = date(d.year, month, day)
+        if q <= d:
+            return q
+    return date(d.year - 1, 12, 31)
+
+
+def previous_quarter_end(q: date) -> date:
+    return quarter_end_on_or_before(q.replace(day=1) - timedelta(days=1))
+
+
+def reporting_quarter(as_of: date) -> date:
+    """Latest quarter whose 45-day 13F deadline has passed (deadline day excluded)."""
+    q = quarter_end_on_or_before(as_of)
+    while q + timedelta(days=FILING_DEADLINE_DAYS) >= as_of:
+        q = previous_quarter_end(q)
+    return q
+
+
+def resolve_holding_ticker(h, cusip_map, name_to_ticker):
+    """Ticker for a 13F row. Today's CUSIP map first, so both quarters of a pair
+    resolve the same way; then the stored ticker; then an issuer-name match."""
+    return (cusip_map.get(h.get("cusip") or "") or h.get("ticker")
+            or name_to_ticker.get(nm(h.get("issuer_name", ""))))
+
+
+def fund_snapshots(holding_rows, cusip_map, name_to_ticker):
+    """cik → period → {"positions": {ticker: {shares, value, issuer}}, "total_value": float}.
+
+    total_value covers every row in the quarter, resolved or not — it is the
+    denominator for a position's share of the fund's 13F book.
+    """
+    snaps: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    for h in holding_rows:
+        c, period = cik10(h["cik"]), h["period_of_report"]
+        snap = snaps[c].setdefault(period, {"positions": {}, "total_value": 0.0})
+        value = float(h.get("value_usd") or 0)
+        snap["total_value"] += value
+        t = resolve_holding_ticker(h, cusip_map, name_to_ticker)
+        if not t:
+            continue
+        p = snap["positions"].setdefault(t, {"shares": 0.0, "value": 0.0, "issuer": h.get("issuer_name")})
+        p["shares"] += float(h.get("shares") or 0)
+        p["value"] += value
+    return snaps
+
+
+def split_factor(splits_for_ticker, after: str, upto: str) -> float:
+    """Product of split ratios dated in (after, upto]. 2.0 = 2-for-1, 0.1 = 1-for-10."""
+    f = 1.0
+    for d, ratio in splits_for_ticker or ():
+        if after < d <= upto and ratio:
+            f *= ratio
+    return f
+
+
+def classify_change(prev_shares, cur_shares, factor: float = 1.0,
+                    threshold: float = FLOW_CHANGE_THRESHOLD) -> str | None:
+    """opened / added / trimmed / exited, or None for held / nothing held."""
+    prev, cur = prev_shares or 0, cur_shares or 0
+    if prev <= 0 and cur <= 0:
+        return None
+    if prev <= 0:
+        return "opened"
+    if cur <= 0:
+        return "exited"
+    # Rounded so 100 → 90 (0.9 − 1 = −0.0999…98 in floating point) is a trim.
+    change = round(cur / (prev * factor) - 1, 9)
+    if change >= threshold:
+        return "added"
+    if change <= -threshold:
+        return "trimmed"
+    return None
+
+
+def _change_rows(cik, meta, cur_period, prev_period, cur_snap, prev_snap, splits, lag, rank):
+    rows = []
+    cur_pos, prev_pos = cur_snap["positions"], prev_snap["positions"]
+    for t in sorted(set(cur_pos) | set(prev_pos)):
+        cur, prev = cur_pos.get(t), prev_pos.get(t)
+        factor = split_factor(splits.get(t), prev_period, cur_period)
+        event = classify_change(prev and prev["shares"], cur and cur["shares"], factor)
+        if not event:
+            continue
+        # Exits are measured on the earlier filing; everything else on the newer one.
+        side, snap = (prev, prev_snap) if event == "exited" else (cur, cur_snap)
+        total = snap["total_value"]
+        rows.append({
+            "cik": cik,
+            "ticker": t,
+            "lag_quarters": lag,
+            "pair_rank": rank,
+            "period": cur_period,
+            "prev_period": prev_period,
+            "event": event,
+            "shares_prev": prev["shares"] if prev else None,
+            "shares_cur": cur["shares"] if cur else None,
+            "split_factor": factor,
+            "value_usd": side["value"],
+            "pct_of_fund": (side["value"] / total) if total > 0 else None,
+            "issuer_name": side["issuer"],
+            **meta,
+        })
+    return rows
+
+
+def fund_position_changes(as_of: date, filers_cfg, holding_rows, cusip_map, universe_rows, splits):
+    """All fund_position_changes rows plus per-fund stats.
+
+    lag 1: every consecutive pair of the fund's filings, rank 0 = newest pair
+           (rank drives the streak). lag 2: newest filing vs two filings back,
+           rank 0 only (the "latest 2 quarters combined" filter).
+    splits: ticker → [(split_date 'YYYY-MM-DD', ratio)].
+    """
+    name_to_ticker = {nm(u.get("name", "")): u["ticker"] for u in universe_rows if u.get("name")}
+    meta = {}
+    for fl in filers_cfg:
+        if not fl.get("cik"):
+            continue
+        tier = fl.get("tier", "B")
+        meta[cik10(fl["cik"])] = {
+            "filer_name": fl["name"], "tier": tier, "category": fl.get("category"),
+            "tier_mult": TIER_MULT.get(tier, 1.0),
+        }
+    cutoff = previous_quarter_end(reporting_quarter(as_of)).isoformat()
+    snaps = fund_snapshots(holding_rows, cusip_map, name_to_ticker)
+
+    rows: list[dict[str, Any]] = []
+    stats = {"counted": [], "no_baseline": [], "stopped_filing": [], "untracked": 0}
+    for c, by_period in snaps.items():
+        if c not in meta:
+            stats["untracked"] += 1
+            continue
+        periods = sorted(by_period, reverse=True)
+        name = meta[c]["filer_name"]
+        if periods[0] < cutoff:
+            stats["stopped_filing"].append((name, periods[0]))
+            continue
+        if len(periods) < 2:
+            stats["no_baseline"].append((name, periods[0]))
+            continue
+        stats["counted"].append((name, periods[0]))
+        for rank, (cur_p, prev_p) in enumerate(zip(periods, periods[1:])):
+            rows += _change_rows(c, meta[c], cur_p, prev_p, by_period[cur_p], by_period[prev_p],
+                                 splits, lag=1, rank=rank)
+        if len(periods) >= 3:
+            rows += _change_rows(c, meta[c], periods[0], periods[2], by_period[periods[0]],
+                                 by_period[periods[2]], splits, lag=2, rank=0)
+    return rows, stats
+
+
+def stock_signal_extras(as_of: date, filers_cfg, filings, insider_rows, e13d_rows, universe_rows,
+                        insider_filters: dict | None = None):
+    """Insider-cluster and activist-13D columns for /funds, using the same rules
+    (and windows) as the v6 scorer so both pages agree."""
+    filer_mult, filer_name, _, _ = filer_weights(filers_cfg)
+    name_to_ticker = {nm(u.get("name", "")): u["ticker"] for u in universe_rows if u.get("name")}
+    window_end = as_of.isoformat()
+    cluster, _, ins_meta, _ = insider_clusters(
+        insider_rows, (as_of - timedelta(days=INSIDER_WINDOW_DAYS)).isoformat(), window_end, insider_filters)
+    filed_at = {f["id"]: f["filed_at"][:10] for f in filings}
+    act, act_dates = activist_13d(e13d_rows, filed_at, name_to_ticker, filer_mult,
+                                  (as_of - timedelta(days=ACTIVIST_13D_WINDOW_DAYS)).isoformat(), window_end)
+    out = []
+    for t in sorted(set(cluster) | set(act)):
+        names = list(dict.fromkeys(m["name"] for m in ins_meta.get(t, []) if m.get("name")))
+        out.append({
+            "ticker": t,
+            "insider_buyers": len(cluster.get(t, ())),
+            "insider_names": names[:5],
+            "activist_filers": list(dict.fromkeys(filer_name.get(c, c) for c, _ in act.get(t, []))),
+            "activist_latest": max(act_dates[t]) if act_dates.get(t) else None,
+        })
+    return out
