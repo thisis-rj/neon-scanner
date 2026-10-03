@@ -30,6 +30,7 @@ from dotenv import load_dotenv
 from supabase import Client, create_client
 
 from ingest.compute_buy_signals import paginated
+from ingest.scoring_rules import market_symbol
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
@@ -46,7 +47,7 @@ def fund_held_tickers(sb: Client) -> list[str]:
     """Every ticker a 13F row resolves to: CUSIP map first, then the stored ticker."""
     tickers = {r["ticker"] for r in paginated(sb, "cusip_ticker_map", "ticker", order="cusip") if r.get("ticker")}
     tickers |= {r["ticker"] for r in paginated(sb, "holdings_13f_effective", "ticker", order="id") if r.get("ticker")}
-    return sorted(tickers)
+    return sorted({market_symbol(t) for t in tickers})
 
 
 def split_history(yf, ticker: str, retries: int = RETRIES) -> list[tuple[str, float]]:

@@ -145,6 +145,15 @@ def test_split_between_filings_is_not_an_add():
     assert events(out) == {("1", "AAA"): "added"}
 
 
+def test_share_class_slash_becomes_dash_so_splits_and_prices_join():
+    # OpenFIGI maps Berkshire B to "BRK/B"; tickers and stock_splits use "BRK-B".
+    rows = [h("1", "2026-03-31", None, 100, cusip="084670702"), h("1", "2026-06-30", None, 200, cusip="084670702")]
+    out, _ = changes(rows, cusip_map={"084670702": "BRK/B"}, splits={"BRK-B": [("2026-05-15", 2.0)]})
+    assert out == []  # the split is found under the dash spelling
+    out, _ = changes(rows, cusip_map={"084670702": "BRK/B"})
+    assert events(out) == {("1", "BRK-B"): "added"}
+
+
 def test_rows_for_one_ticker_in_one_quarter_are_summed():
     # Base filing + NEW HOLDINGS amendment, or two CUSIPs for one company.
     rows = [h("1", "2026-03-31", "AAA", 100),

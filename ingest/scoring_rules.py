@@ -475,11 +475,18 @@ def reporting_quarter(as_of: date) -> date:
     return q
 
 
+def market_symbol(ticker):
+    """OpenFIGI writes share classes with a slash (BRK/B); the tickers table
+    (SEC map) and Yahoo use a dash (BRK-B). One spelling so /funds rows join
+    prices, industry and stock_splits."""
+    return ticker.replace("/", "-") if ticker else ticker
+
+
 def resolve_holding_ticker(h, cusip_map, name_to_ticker):
     """Ticker for a 13F row. Today's CUSIP map first, so both quarters of a pair
     resolve the same way; then the stored ticker; then an issuer-name match."""
-    return (cusip_map.get(h.get("cusip") or "") or h.get("ticker")
-            or name_to_ticker.get(nm(h.get("issuer_name", ""))))
+    return market_symbol(cusip_map.get(h.get("cusip") or "") or h.get("ticker")
+                         or name_to_ticker.get(nm(h.get("issuer_name", ""))))
 
 
 def fund_snapshots(holding_rows, cusip_map, name_to_ticker):
