@@ -25,8 +25,39 @@ See [CLAUDE.md §2 and §8](CLAUDE.md). Short version: no FOMO surfaces, no LLM 
 
 ## Status
 
-v0 — scaffolding only. See `CLAUDE.md` §7 for the build sequence.
+Live. The daily ingest runs on GitHub Actions and the UI is deployed on Vercel. **Read `CLAUDE.md` first** — the design philosophy there is load-bearing (no FOMO surfaces, no fabricated metrics; see §2).
 
-## Setup
+## Getting started (new contributor)
 
-Setup requires user-supplied credentials and is documented in `CLAUDE.md` §7 task 1. Do not attempt to run before completing that step.
+1. **Clone**
+   ```bash
+   git clone https://github.com/solveandbuild-source/neon-scanner.git
+   ```
+2. **Secrets** — get the real values from Riya (share them securely, not over chat). Copy the templates and fill them in. Both target files are gitignored — never commit them:
+   ```bash
+   cp .env.example .env                       # Python ingest: Supabase + EDGAR + Groq (+ PAT for migrations)
+   cp web/.env.local.example web/.env.local   # web app: Supabase URL + secret key
+   ```
+3. **Web app**
+   ```bash
+   cd web && npm install && npm run dev       # http://localhost:3000
+   ```
+4. **Python ingest**
+   ```bash
+   python -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   python -m ingest.edgar                     # example: poll EDGAR for new filings
+   ```
+5. **Deploying** — always `scripts/deploy.sh "message"`, never a bare `vercel --prod`. It ships to Vercel *and* commits+pushes; GitHub disables the ingest cron after 60 days with no commits (see `CLAUDE.md` §10).
+
+## Where things live
+
+| Path | What |
+|---|---|
+| `ingest/` | Python ETL — EDGAR poll, 13F/13D/Form-4 parsers, prices, earnings, cost basis |
+| `web/app/` | Next.js routes (one folder per page; a `page.tsx.disabled` is a hidden route) |
+| `web/components/`, `web/lib/` | shared UI + helpers |
+| `schema/migrations/` | numbered SQL, auto-applied by `ingest/migrate.py` |
+| `config/tracked_filers.yml` | the watched filer universe |
+| `.github/workflows/daily-ingest.yml` | the scheduled pipeline |
+| `CLAUDE.md` | architecture + non-negotiable design rules — read before coding |
