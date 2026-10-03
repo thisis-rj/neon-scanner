@@ -97,3 +97,14 @@ export function fmtSignedPct(v: number | null | undefined, fraction = false): st
   const pct = fraction ? v * 100 : v;
   return `${pct > 0 ? "+" : ""}${pct.toFixed(1)}%`;
 }
+
+/** Whole-rupee with Indian grouping: ₹9,76,504. For the pocket-return band. */
+export function fmtInr(n: number | null | undefined): string {
+  if (n == null) return "—";
+  return n.toLocaleString("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
+}
+
+/** Share count, readable: 2 decimals ≥1, 4 decimals for sub-share lots. */
+export function fmtQty(n: number): string {
+  return n.toLocaleString("en-US", { maximumFractionDigits: Math.abs(n) >= 1 ? 2 : 4 });
+}

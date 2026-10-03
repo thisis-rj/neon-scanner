@@ -1,32 +1,559 @@
 "use client";
 
-import { BriefcaseIcon } from "lucide-react";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { BriefcaseIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import { cn } from "cn";
+import { savePositionNote, addTransaction, deleteTransaction } from "@/app/my-stocks/actions";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableCard } from "@/components/app/table-card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Pct } from "@/components/app/cells";
+import { fmtInr, fmtQty, fmtUsdExact } from "@/lib/format";
+
+export type Holding = {
+  person: string;
+  ticker: string;
+  stock_name: string | null;
+  qty: number;
+  avg_cost: number;
+  realized_pnl: number;
+  current_price: number | null;
+  target_price: number | null;
+  comment: string | null;
+  next_earnings: string | null;
+  in_smart_money: boolean;
+  return_1m: number | null;
+};
+
+export type SellLog = {
+  id: number;
+  person: string;
+  ticker: string;
+  stock_name: string | null;
+  qty: number;
+  price: number;
+  trade_date: string;
+  realized: number;
+  cost_basis: number;
+};
+
+export type PocketCash = { deposited: number; withdrawn: number; net: number };
 
 const PEOPLE = ["Riya", "Vijay"] as const;
+type Person = (typeof PEOPLE)[number];
 
-// Empty shell for the My Stocks tab — two sub-tabs (Riya / Vijay). Holdings +
-// scanner overlay get wired in once the portfolios are provided.
-export function MyStocksTabs() {
+function fmtDate(iso: string): string {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+/** Full-precision qty for form defaults (display uses fmtQty). */
+function qtyFull(n: number): string {
+  return Number(n.toFixed(6)).toString();
+}
+function toneText(n: number): string {
+  return n > 0 ? "text-positive" : n < 0 ? "text-negative" : "text-muted-foreground";
+}
+
+function SmBadge() {
+  return (
+    <Badge variant="info" className="h-4 rounded-sm px-1 text-[10px]" title="Held by a tracked filer (smart money)">
+      SM
+    </Badge>
+  );
+}
+
+function HoldingRow({ h }: { h: Holding }) {
+  const router = useRouter();
+  const cur = h.current_price;
+  const uPnl = cur != null ? h.qty * (cur - h.avg_cost) : null;
+  const uPct = cur != null && h.avg_cost ? (cur / h.avg_cost - 1) * 100 : null;
+
+  const [open, setOpen] = useState(false);
+  const [target, setTarget] = useState(h.target_price != null ? String(h.target_price) : "");
+  const [comment, setComment] = useState(h.comment ?? "");
+  const [action, setAction] = useState<null | "buy" | "sell">(null);
+  const [txQty, setTxQty] = useState("");
+  const [txPrice, setTxPrice] = useState(cur != null ? String(cur) : "");
+  const [, startSave] = useTransition();
+  const [flash, setFlash] = useState(false);
+
+  function flashSaved() {
+    setFlash(true);
+    setTimeout(() => setFlash(false), 1200);
+  }
+  function saveTarget() {
+    const v = target.trim() === "" ? null : Number(target);
+    if (v != null && Number.isNaN(v)) return;
+    startSave(async () => {
+      await savePositionNote(h.person, h.ticker, { target_price: v });
+      flashSaved();
+    });
+  }
+  function saveComment() {
+    startSave(async () => {
+      await savePositionNote(h.person, h.ticker, { comment: comment.trim() || null });
+      flashSaved();
+    });
+  }
+  function openAction(a: "buy" | "sell") {
+    setAction(a);
+    setTxQty(a === "sell" ? qtyFull(h.qty) : "");
+    setTxPrice(cur != null ? String(cur) : "");
+  }
+  function submitTxn() {
+    const q = Number(txQty);
+    const p = Number(txPrice);
+    if (Number.isNaN(q) || q <= 0 || Number.isNaN(p) || p < 0) return;
+    if (action === "sell" && q > h.qty + 1e-9) return;
+    startSave(async () => {
+      await addTransaction(h.person, h.ticker, action!, q, p);
+      setAction(null);
+      router.refresh();
+    });
+  }
+
+  const targetNum = target.trim() !== "" && !Number.isNaN(Number(target)) ? Number(target) : null;
+  const toTarget = cur != null && targetNum != null && targetNum > 0 ? (targetNum / cur - 1) * 100 : null;
+
+  return (
+    <>
+      <TableRow className="cursor-pointer" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <TableCell className="w-8 pr-0">
+          <ChevronRightIcon
+            className={cn("size-4 text-muted-foreground transition-transform", open && "rotate-90")}
+          />
+        </TableCell>
+        <TableCell>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-foreground">{h.stock_name ?? h.ticker}</span>
+            {h.in_smart_money && <SmBadge />}
+          </div>
+          <div className="mt-0.5 font-mono text-xs text-muted-foreground">
+            {h.ticker} · {fmtQty(h.qty)} sh
+            {Math.abs(h.realized_pnl) > 0.005 && (
+              <span className={cn("ml-1", h.realized_pnl >= 0 ? "text-positive/80" : "text-negative/80")}>
+                · realized {h.realized_pnl >= 0 ? "+" : ""}
+                {fmtUsdExact(h.realized_pnl, true)}
+              </span>
+            )}
+          </div>
+        </TableCell>
+        <TableCell className="text-right tabular-nums text-muted-foreground">{fmtUsdExact(h.avg_cost, true)}</TableCell>
+        <TableCell className="text-right tabular-nums">{cur != null ? fmtUsdExact(cur, true) : "—"}</TableCell>
+        <TableCell className="text-right tabular-nums">
+          {uPnl == null ? (
+            <span className="text-muted-foreground/60">—</span>
+          ) : (
+            <span className={toneText(uPnl)}>
+              {uPnl >= 0 ? "+" : ""}
+              {fmtUsdExact(uPnl, true)} <Pct value={uPct} className="text-xs" />
+            </span>
+          )}
+        </TableCell>
+        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+          <Input
+            type="number"
+            inputMode="decimal"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            onBlur={saveTarget}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+            placeholder="—"
+            className="ml-auto h-7 w-24 text-right tabular-nums"
+          />
+          {toTarget != null && (
+            <div className={cn("mt-0.5 text-[10px]", toTarget >= 0 ? "text-positive/80" : "text-negative/80")}>
+              {toTarget >= 0 ? "+" : ""}
+              {toTarget.toFixed(0)}% to target
+            </div>
+          )}
+        </TableCell>
+      </TableRow>
+
+      {open && (
+        <TableRow className="hover:bg-transparent">
+          <TableCell />
+          <TableCell colSpan={5} className="whitespace-normal pb-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="md:col-span-2">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+                    Notes (shared)
+                  </span>
+                  {flash && <span className="text-xs text-positive">saved ✓</span>}
+                </div>
+                <textarea
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  onBlur={saveComment}
+                  placeholder="Why we hold this, thesis, exit plan…"
+                  rows={3}
+                  className="w-full resize-y rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                />
+                <div className="mt-3">
+                  {action === null ? (
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" className="text-positive" onClick={() => openAction("buy")}>
+                        Buy more
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => openAction("sell")}>
+                        Sell
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground">{action === "sell" ? "Sell" : "Buy"}</span>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        value={txQty}
+                        onChange={(e) => setTxQty(e.target.value)}
+                        placeholder="qty"
+                        className="h-7 w-24 text-right tabular-nums"
+                      />
+                      {action === "sell" && (
+                        <Button variant="ghost" size="xs" onClick={() => setTxQty(qtyFull(h.qty / 2))}>
+                          50%
+                        </Button>
+                      )}
+                      <span className="text-xs text-muted-foreground">@</span>
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        value={txPrice}
+                        onChange={(e) => setTxPrice(e.target.value)}
+                        className="h-7 w-24 text-right tabular-nums"
+                      />
+                      <Button
+                        variant={action === "sell" ? "destructive" : "outline"}
+                        size="sm"
+                        className={action === "buy" ? "text-positive" : undefined}
+                        onClick={submitTxn}
+                      >
+                        Confirm {action}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setAction(null)}>
+                        cancel
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-lg border p-3">
+                <div className="mb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Scanner</div>
+                <dl className="space-y-1.5 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted-foreground">Next earnings</dt>
+                    <dd className="tabular-nums">{h.next_earnings ? fmtDate(h.next_earnings) : "—"}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted-foreground">Smart money holds it</dt>
+                    <dd className={h.in_smart_money ? "text-info" : "text-muted-foreground"}>
+                      {h.in_smart_money ? "Yes" : "No"}
+                    </dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-muted-foreground">1-month move</dt>
+                    <dd>
+                      <Pct value={h.return_1m} fraction />
+                    </dd>
+                  </div>
+                </dl>
+                <p className="mt-3 text-xs text-muted-foreground/70">News &amp; signals — coming soon.</p>
+              </div>
+            </div>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+function SoldRow({ s }: { s: SellLog }) {
+  const router = useRouter();
+  const [, startSave] = useTransition();
+  const win = s.realized >= 0;
+  const pct = s.cost_basis ? (s.price / s.cost_basis - 1) * 100 : 0;
+  function del() {
+    startSave(async () => {
+      await deleteTransaction(s.id);
+      router.refresh();
+    });
+  }
+  return (
+    <TableRow className="group">
+      <TableCell>
+        <div className="flex items-baseline gap-2">
+          <span className="font-medium text-foreground">{s.ticker}</span>
+          {s.stock_name && s.stock_name !== s.ticker && (
+            <span className="max-w-44 truncate text-xs text-muted-foreground">{s.stock_name}</span>
+          )}
+        </div>
+        <div className="mt-0.5 text-xs tabular-nums text-muted-foreground">
+          {fmtQty(s.qty)} sh · {fmtDate(s.trade_date)}
+        </div>
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        <span className="text-muted-foreground">{fmtUsdExact(s.cost_basis, true)}</span>
+        <span className="mx-1.5 text-muted-foreground/50">→</span>
+        <span>{fmtUsdExact(s.price, true)}</span>
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        <span className={cn("font-medium", win ? "text-positive" : "text-negative")}>
+          {win ? "+" : ""}
+          {fmtUsdExact(s.realized, true)}
+        </span>{" "}
+        <Pct value={pct} className="text-xs" />
+      </TableCell>
+      <TableCell className="w-8 text-right">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-negative"
+          title="Undo this sell"
+          onClick={del}
+        >
+          <XIcon />
+        </Button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function PocketBand({ cash, value, usdInr }: { cash: PocketCash; value: number; usdInr: number | null }) {
+  const currentInr = usdInr != null ? value * usdInr : null;
+  const gain = currentInr != null ? currentInr - cash.net : null;
+  const pct = gain != null && cash.net > 0 ? (gain / cash.net) * 100 : null;
+  return (
+    <Card size="sm">
+      <CardHeader className="border-b">
+        <CardTitle className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          Overall — money from pocket (₹)
+        </CardTitle>
+        {usdInr != null && (
+          <CardAction className="text-xs tabular-nums text-muted-foreground">
+            {fmtUsdExact(value, true)} × ₹{usdInr.toFixed(2)}
+          </CardAction>
+        )}
+      </CardHeader>
+      <CardContent>
+        {currentInr == null || gain == null ? (
+          <p className="text-sm text-muted-foreground">No USD/INR rate yet — can&rsquo;t compute rupee return.</p>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-baseline gap-x-8 gap-y-2 text-sm">
+              <div>
+                <span className="text-muted-foreground">Net from pocket</span>{" "}
+                <span className="tabular-nums">{fmtInr(cash.net)}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Value today</span>{" "}
+                <span className="tabular-nums">{fmtInr(currentInr)}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Total gain</span>{" "}
+                <span className={cn("font-semibold tabular-nums", gain >= 0 ? "text-positive" : "text-negative")}>
+                  {gain >= 0 ? "+" : ""}
+                  {fmtInr(gain)}
+                  {pct != null && ` (${gain >= 0 ? "+" : ""}${pct.toFixed(1)}%)`}
+                </span>
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground/70">
+              Deposited {fmtInr(cash.deposited)} · withdrew {fmtInr(cash.withdrawn)} (netted out). Return is on net
+              invested, in ₹, and includes the ₹/$ move. Deposits are provisional — tell me to adjust.
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PersonView({
+  person,
+  holdings,
+  sells,
+  cash,
+  usdInr,
+}: {
+  person: Person;
+  holdings: Holding[];
+  sells: SellLog[];
+  cash?: PocketCash;
+  usdInr: number | null;
+}) {
+  const myHoldings = [...holdings].sort((a, b) => b.qty * b.avg_cost - a.qty * a.avg_cost);
+  const mySells = [...sells].sort((a, b) => b.trade_date.localeCompare(a.trade_date) || b.id - a.id);
+
+  let invested = 0;
+  let value = 0;
+  for (const h of myHoldings) {
+    invested += h.qty * h.avg_cost;
+    value += h.qty * (h.current_price ?? h.avg_cost);
+  }
+  const uPnl = value - invested;
+  const uPct = invested ? (uPnl / invested) * 100 : 0;
+
+  let realizedTotal = 0;
+  let wins = 0;
+  for (const s of mySells) {
+    realizedTotal += s.realized;
+    if (s.realized >= 0) wins++;
+  }
+  const winRate = mySells.length ? Math.round((wins / mySells.length) * 100) : 0;
+
+  if (myHoldings.length === 0 && mySells.length === 0 && !cash) {
+    return (
+      <Empty className="border py-16">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <BriefcaseIcon />
+          </EmptyMedia>
+          <EmptyTitle>No holdings yet</EmptyTitle>
+          <EmptyDescription>{person}&rsquo;s holdings will go here.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      {cash && <PocketBand cash={cash} value={value} usdInr={usdInr} />}
+
+      <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
+        <div>
+          <span className="text-muted-foreground">Invested</span>{" "}
+          <span className="tabular-nums">{fmtUsdExact(invested, true)}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Current value</span>{" "}
+          <span className="tabular-nums">{fmtUsdExact(value, true)}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Unrealized P&amp;L</span>{" "}
+          <span className={cn("font-medium tabular-nums", uPnl >= 0 ? "text-positive" : "text-negative")}>
+            {uPnl >= 0 ? "+" : ""}
+            {fmtUsdExact(uPnl, true)} ({uPnl >= 0 ? "+" : ""}
+            {uPct.toFixed(1)}%)
+          </span>
+        </div>
+      </div>
+
+      {myHoldings.length > 0 && (
+        <TableCard title="Open positions" description="Live prices from Yahoo · average-cost basis.">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-8" />
+                <TableHead>Stock</TableHead>
+                <TableHead className="text-right">Avg cost</TableHead>
+                <TableHead className="text-right">Current</TableHead>
+                <TableHead className="text-right">P&amp;L</TableHead>
+                <TableHead className="text-right">Target</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {myHoldings.map((h) => (
+                <HoldingRow key={h.ticker} h={h} />
+              ))}
+            </TableBody>
+          </Table>
+        </TableCard>
+      )}
+
+      <div className="flex items-center gap-3">
+        <Separator className="flex-1 bg-negative/40" />
+        <span className="text-xs font-medium tracking-wider text-negative/80 uppercase">Sold</span>
+        <Separator className="flex-1 bg-negative/40" />
+      </div>
+
+      {mySells.length === 0 ? (
+        <p className="text-center text-xs text-muted-foreground">
+          No closed trades yet — sell from a holding&rsquo;s ▸ menu.
+        </p>
+      ) : (
+        <TableCard
+          title="Closed trades"
+          description={
+            <span className="flex flex-wrap gap-x-6 gap-y-1">
+              <span>
+                Realized P&amp;L{" "}
+                <span className={cn("font-semibold tabular-nums", realizedTotal >= 0 ? "text-positive" : "text-negative")}>
+                  {realizedTotal >= 0 ? "+" : ""}
+                  {fmtUsdExact(realizedTotal, true)}
+                </span>
+              </span>
+              <span>
+                Win rate <span className="tabular-nums text-foreground">{winRate}%</span> ({wins}/{mySells.length})
+              </span>
+            </span>
+          }
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Stock</TableHead>
+                <TableHead className="text-right">Cost → Sell</TableHead>
+                <TableHead className="text-right">Realized P&amp;L</TableHead>
+                <TableHead className="w-8" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {mySells.map((s) => (
+                <SoldRow key={s.id} s={s} />
+              ))}
+            </TableBody>
+          </Table>
+        </TableCard>
+      )}
+
+      <p className="text-xs text-muted-foreground/70">
+        Prices from Yahoo. Average-cost basis. Open positions reconcile to the broker; realized P&amp;L / win rate on
+        trades closed before our earliest record (Dec 2025) is approximate.
+      </p>
+    </div>
+  );
+}
+
+export function MyStocksTabs({
+  holdings,
+  sells,
+  cash = {},
+  usdInr = null,
+}: {
+  holdings: Holding[];
+  sells: SellLog[];
+  cash?: Record<string, PocketCash>;
+  usdInr?: number | null;
+}) {
   return (
     <Tabs defaultValue={PEOPLE[0]} className="gap-4">
       <TabsList variant="line">
         {PEOPLE.map((p) => (
-          <TabsTrigger key={p} value={p}>{p}</TabsTrigger>
+          <TabsTrigger key={p} value={p}>
+            {p}
+          </TabsTrigger>
         ))}
       </TabsList>
       {PEOPLE.map((p) => (
         <TabsContent key={p} value={p}>
-          <Empty className="border py-16">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <BriefcaseIcon />
-              </EmptyMedia>
-              <EmptyTitle>No holdings yet</EmptyTitle>
-              <EmptyDescription>{p}&rsquo;s holdings will go here.</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <PersonView
+            person={p}
+            holdings={holdings.filter((h) => h.person === p)}
+            sells={sells.filter((s) => s.person === p)}
+            cash={cash[p]}
+            usdInr={usdInr}
+          />
         </TabsContent>
       ))}
     </Tabs>

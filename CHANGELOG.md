@@ -38,7 +38,27 @@ Author: Vijay (with Claude). Branch `fix/data-correctness`, rebased onto `040906
 
 - `scripts/deploy.sh` runs `python -m ingest.migrate` before it pushes, only on `main` and only when every file in `schema/migrations` is committed (other branches are previews and leave production's schema alone). **Merging a PR on GitHub skips this**: run the migrate yourself before merging a PR that adds a migration.
 - CI: `tests.yml` runs pytest and the PGlite view tests on every push; the nightly SEC job runs pytest first.
-- Migrations renumbered 019/020 → **023/024**: production already has `019`–`022` from the My Stocks portfolio work, whose files are not on `main` yet. **Riya: please push those four files.**
+- Migrations renumbered 019/020 → **023/024**: production already has `019`–`022` from the My Stocks portfolio work. **Those four files are now on `main`** — see the My Stocks entry below.
+
+## 2026-10-03 — My Stocks: real portfolio, pocket-return band, holdings protection
+
+Authors: Riya (with Claude), rebuilt on top of Vijay's `040906c` shadcn redesign.
+
+### My Stocks is now a live transaction-ledger portfolio (was an empty tab)
+
+- **Transaction model.** Net qty, average cost, realized P&L and win rate are **derived from a buy/sell ledger** (`portfolio_transactions`), so partial sells, averaging up/down and multiple lots per stock all work. Buy-more / Sell (incl. a 50% quick button) write to the ledger from each holding's ▸ menu; per-stock target price + shared notes persist to `portfolio_positions`.
+- **Closed trades** show below a red "Sold" divider with win rate + realized P&L. Open positions reconcile to the broker's current holdings; a few opening lots predate our earliest record (Dec 2025), so realized P&L / win rate on some closed names is flagged approximate. Basis-less sells (no recorded buy) are omitted rather than shown as phantom gains.
+- **Overall pocket-return band (₹).** Return is measured the honest way — **current portfolio value (USD→INR at today's rate) vs net cash actually deposited from pocket**, not against cost basis (which includes reinvested earnings). Cash flows live in `portfolio_cashflows`; USD/INR in `fx_rates`, refreshed by the daily price job. This is a transparent cash-flow metric with its components shown (deposited / withdrawn / value) — not a §2.4 fabricated score, and it lives on this personal tab only, never in the signal views. **Riya's deposits are provisional** (read off INDmoney screenshots) until confirmed against the broker's "total added".
+- Built entirely on Vijay's shadcn system (`ui/*`, `app/*`, `lib/format`, semantic tokens) — no raw palette colors. New shared formatters: `fmtUsdExact`, `fmtInr`, `fmtQty`.
+
+### Data model
+
+- New tables (migrations `019`–`022`): `portfolio_positions` (metadata + current price), `portfolio_transactions` (the ledger), `portfolio_cashflows` (pocket deposits/withdrawals, INR), `fx_rates` (USD/INR). Applied via `python -m ingest.migrate`.
+
+### Security: real holdings can no longer leak
+
+- **`ingest/portfolio_holdings.py` holds the real holdings and is now gitignored**; `ingest/portfolio.py` imports it (and no longer contains any real data), so it is safe to commit. Previously the holdings sat inline in an untracked-but-not-ignored file — one `git add -A` (which `deploy.sh` runs) would have published them.
+- `python -m ingest.portfolio --prices` (daily price + USD/INR refresh) is **DB-driven and needs no holdings file**, so CI and other clones run it fine.
 
 ## 2026-10-03 — Deploy on push, shadcn/ui redesign, three bug fixes
 
