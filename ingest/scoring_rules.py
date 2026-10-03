@@ -186,11 +186,16 @@ def cross_quarter_initiations(traj, universe, latest_period_by_filer, recency_cu
 
 # ─── Insiders ───────────────────────────────────────────────────────────
 
-def insider_clusters(insider_rows, window_start: str, window_end: str):
-    """Distinct insider buyers per ticker whose trade and filing fall in the window."""
-    ins_cluster = defaultdict(set)
-    ins_dates = defaultdict(list)
-    ins_meta = defaultdict(list)
+def insider_clusters(insider_rows, window_start: str, window_end: str, filters: dict | None = None):
+    """Distinct qualifying insider buyers per ticker whose trade and filing fall in the window.
+
+    With `filters` (signal_weights.yml `insider_filters`), each insider's buys
+    in the window are judged together by insider_qualifies(); excluded
+    insiders are returned with the reason so the signal can show them
+    (CLAUDE.md §2.4). Without filters every buyer counts (the v6 rule).
+    Returns (cluster, dates, meta, excluded): excluded is ticker → [{name, reason}].
+    """
+    in_window = defaultdict(list)  # (ticker, reporter) -> rows
     for r in insider_rows:
         t = r.get("issuer_ticker")
         if not t:
@@ -201,10 +206,88 @@ def insider_clusters(insider_rows, window_start: str, window_end: str):
         fa = (r.get("filed_at") or "")[:10]
         if not fa or fa > window_end:
             continue
-        ins_cluster[t].add(r["reporter_cik"])
-        ins_dates[t].append(fa)
-        ins_meta[t].append({"name": r.get("reporter_name"), "value": r.get("value_usd"), "date": td})
-    return ins_cluster, ins_dates, ins_meta
+        in_window[(t, r["reporter_cik"])].append(r)
+
+    ins_cluster = defaultdict(set)
+    excluded = defaultdict(list)
+    counted_ids = set()
+    for (t, reporter), rows in in_window.items():
+        ok, reason, counted = insider_qualifies(rows, filters) if filters else (True, None, rows)
+        if not ok:
+            excluded[t].append({"name": rows[0].get("reporter_name"), "reason": reason})
+            continue
+        ins_cluster[t].add(reporter)
+        counted_ids.update(id(r) for r in counted)
+
+    # Dates and buyer names in the original row order (what the page lists first).
+    ins_dates = defaultdict(list)
+    ins_meta = defaultdict(list)
+    for r in insider_rows:
+        if id(r) not in counted_ids:
+            continue
+        t = r["issuer_ticker"]
+        ins_dates[t].append((r.get("filed_at") or "")[:10])
+        ins_meta[t].append({"name": r.get("reporter_name"), "value": r.get("value_usd"),
+                            "date": r.get("transaction_date")})
+    return ins_cluster, ins_dates, ins_meta, excluded
+
+
+def insider_qualifies(rows, filters: dict):
+    """Judge one insider's open-market buys of one ticker inside the window.
+
+    Returns (qualifies, exclusion_reason, rows_counted). Filters, each off when
+    its setting is falsy:
+      officers_directors_only  officer or director; a pure 10% holder or "Other" is excluded
+      exclude_10b5_1           pre-scheduled Rule 10b5-1 plan buys are dropped first
+      min_value_usd            total of the remaining buys
+      min_stake_growth_pct     Σ shares bought / shares held before; first purchase passes
+    Unknown inputs (no 10b5-1 flag before April 2023, missing price or
+    shares-after) never exclude anyone.
+    """
+    if filters.get("officers_directors_only") and not any(
+        r.get("reporter_is_officer") or r.get("reporter_is_director") for r in rows
+    ):
+        return False, "not_officer_or_director", []
+
+    if filters.get("exclude_10b5_1"):
+        rows = [r for r in rows if r.get("is_10b5_1") is not True]
+        if not rows:
+            return False, "10b5_1_plan", []
+
+    min_value = filters.get("min_value_usd")
+    if min_value:
+        values = [r.get("value_usd") for r in rows]
+        if all(v is not None for v in values) and sum(values) < min_value:
+            return False, "below_min_value", []
+
+    min_growth = filters.get("min_stake_growth_pct")
+    if min_growth:
+        growth = stake_growth(rows)
+        if growth is not None and growth < min_growth:
+            return False, "stake_growth_below_min", []
+
+    return True, None, rows
+
+
+def stake_growth(rows) -> float | None:
+    """Σ shares bought / shares held before the first buy, per ownership line (direct/indirect).
+
+    Shares held before = latest shares_owned_after on each line − shares bought
+    on that line. Returns inf for a first-ever purchase, None if any input is missing.
+    """
+    lines = defaultdict(list)
+    for r in rows:
+        if r.get("shares") is None or r.get("shares_owned_after") is None:
+            return None
+        lines[r.get("direct_indirect")].append(r)
+    bought = held_before = 0.0
+    for line_rows in lines.values():
+        line_bought = sum(float(r["shares"]) for r in line_rows)
+        bought += line_bought
+        held_before += max(float(r["shares_owned_after"]) for r in line_rows) - line_bought
+    if held_before <= 0:
+        return float("inf")
+    return bought / held_before
 
 
 def insider_score(n_buyers: int) -> float:
@@ -245,6 +328,7 @@ def compute_signals(
     holding_rows,
     insider_rows,
     e13d_rows,
+    insider_filters: dict | None = None,
 ) -> list[dict[str, Any]]:
     """Score every candidate ticker with the v6 formula. Returns rows sorted by score desc.
 
@@ -263,8 +347,9 @@ def compute_signals(
     traj = build_trajectories(f13f, holdings_by_filing(holding_rows, name_to_ticker))
     latest_period = filer_latest_periods(f13f)
 
-    ins_cluster, ins_dates, ins_meta = insider_clusters(
-        insider_rows, (as_of - timedelta(days=INSIDER_WINDOW_DAYS)).isoformat(), window_end
+    ins_cluster, ins_dates, ins_meta, ins_excluded = insider_clusters(
+        insider_rows, (as_of - timedelta(days=INSIDER_WINDOW_DAYS)).isoformat(), window_end,
+        insider_filters,
     )
     new_pos, add_pos, velocity, contributing = classify_positions(
         traj, universe, filer_mult, latest_period, recency_cutoff
@@ -320,7 +405,10 @@ def compute_signals(
             "score": round(total, 2),
             "num_sources": n_types,
             "components": {
-                "insider_cluster": {"n": len(ins_cluster.get(t, set())), "score": round(ins_score, 2)},
+                "insider_cluster": {
+                    "n": len(ins_cluster.get(t, set())), "score": round(ins_score, 2),
+                    **({"excluded": ins_excluded[t]} if ins_excluded.get(t) else {}),
+                },
                 "thirteenf_new": {"n": len(new_pos.get(t, [])), "score": round(n_score, 2)},
                 "thirteenf_add": {"n": len(add_pos.get(t, [])), "score": round(a_score, 2)},
                 "activist_13d": {"n": len(act_13d.get(t, [])), "score": round(d13_score, 2)},

@@ -3,6 +3,7 @@ to signals_latest table — read source for the /signals page.
 
 Formula (same as backtest v6; implemented in ingest/scoring_rules.py):
   1. Insider cluster (Lakonishok-Lee)  0/1/2/3+ buyers in 30d → 0 / 1.5 / 3.5 / 7.0+
+     counting only buyers who pass config/signal_weights.yml `insider_filters`
   2. 13F new (latest quarter)          Σ filer.multiplier × 2.0
   3. 13F add (latest quarter, ≥20%)    Σ filer.multiplier × 0.5
   4. Activist 13D (last 90d, initial)  Σ filer.multiplier × 5.0
@@ -77,10 +78,17 @@ def main() -> None:
     # Effective long-equity rows only: amendments resolved, options and bond
     # principal (PRN) excluded — see schema/migrations/019_holdings_effective.sql.
     holding_rows = paginated(sb, "holdings_13f_effective", "filing_id,ticker,shares,issuer_name")
-    insider_rows = paginated(sb, "insider_transactions", "issuer_ticker,reporter_cik,transaction_date,filed_at,reporter_name,value_usd")
+    insider_rows = paginated(sb, "insider_transactions",
+                             "issuer_ticker,reporter_cik,transaction_date,filed_at,reporter_name,value_usd,"
+                             "reporter_is_officer,reporter_is_director,is_10b5_1,shares,shares_owned_after,direct_indirect")
     e13d_rows = paginated(sb, "events_13d", "ticker,cik,form_subtype,filing_id,issuer_name")
 
-    scored = compute_signals(AS_OF, filers_cfg, universe_rows, filings, holding_rows, insider_rows, e13d_rows)
+    with (PROJECT_ROOT / "config" / "signal_weights.yml").open() as f:
+        insider_filters = (yaml.safe_load(f) or {}).get("insider_filters") or {}
+    print(f"  insider filters: {insider_filters}", flush=True)
+
+    scored = compute_signals(AS_OF, filers_cfg, universe_rows, filings, holding_rows, insider_rows, e13d_rows,
+                             insider_filters)
     print(f"  Scored picks (≥4): {len(scored)}", flush=True)
 
     # ─── Fetch returns for each (top 200 to keep runtime reasonable) ─────

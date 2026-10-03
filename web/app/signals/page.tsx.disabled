@@ -40,12 +40,35 @@ export const dynamic = "force-dynamic";
 // /signals — BUY signal table, read from signals_latest.
 // Default threshold: score ≥ 7. Filter at top: text box "min score".
 
+// Insiders the filters dropped (config/signal_weights.yml `insider_filters`).
+// Listed next to the score so a filtered-out buyer is never invisible (§2.4).
+type ExcludedInsider = { name: string | null; reason: string };
+const EXCLUSION_REASON: Record<string, string> = {
+  not_officer_or_director: "not an officer or director",
+  "10b5_1_plan": "pre-scheduled 10b5-1 plan",
+  below_min_value: "under $25k",
+  stake_growth_below_min: "grew stake <10%",
+};
+
+function ExcludedList({ list }: { list: ExcludedInsider[] }) {
+  return (
+    <>
+      <span className="font-medium">Not counted ({list.length}):</span>
+      {list.map((e, i) => (
+        <span key={i}>
+          {e.name ?? "Unknown"} — {EXCLUSION_REASON[e.reason] ?? e.reason}
+        </span>
+      ))}
+    </>
+  );
+}
+
 type Signal = {
   ticker: string;
   score: number;
   num_sources: number;
   components: {
-    insider_cluster?: { n: number; score: number };
+    insider_cluster?: { n: number; score: number; excluded?: ExcludedInsider[] };
     thirteenf_new?: { n: number; score: number };
     thirteenf_add?: { n: number; score: number };
     activist_13d?: { n: number; score: number };
@@ -306,12 +329,28 @@ export default async function SignalsPage({
                                   <span className="text-foreground">{v.n}</span>
                                 </Badge>
                               </TooltipTrigger>
-                              <TooltipContent>
-                                {k.long}: {v.n} · +{v.score.toFixed(1)} pts
+                              <TooltipContent className="flex-col items-start">
+                                <span>{k.long}: {v.n} · +{v.score.toFixed(1)} pts</span>
+                                {k.key === "insider_cluster" && c.insider_cluster?.excluded?.length ? (
+                                  <ExcludedList list={c.insider_cluster.excluded} />
+                                ) : null}
                               </TooltipContent>
                             </Tooltip>
                           );
                         })}
+                        {!c.insider_cluster?.n && c.insider_cluster?.excluded?.length ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge variant="outline" className="cursor-help rounded-sm px-1.5 font-mono text-[11px] text-muted-foreground line-through">
+                                ins<span>{c.insider_cluster.excluded.length}</span>
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent className="flex-col items-start">
+                              <span>Insider buys in the last 30 days, none counted</span>
+                              <ExcludedList list={c.insider_cluster.excluded} />
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : null}
                       </div>
                     </TableCell>
                     <TableCell className="whitespace-normal">
@@ -363,7 +402,8 @@ export default async function SignalsPage({
       </TableCard>
 
       <p className="max-w-4xl text-xs leading-relaxed text-pretty text-muted-foreground">
-        Score components: insider cluster (Lakonishok-Lee, 30-day window), 13F new positions, 13F adds
+        Score components: insider cluster (Lakonishok-Lee, 30-day window; counts officers and directors
+        buying $25k+ outside a 10b5-1 plan that grows their stake 10%+), 13F new positions, 13F adds
         (≥20%), activist 13D, share-count velocity (≥2× quarter over quarter), cross-quarter confluence
         (3+ distinct filers across 2 quarters), plus a +5 multi-source bonus when 3+ types fire. Refreshed
         nightly. Returns from yfinance.
