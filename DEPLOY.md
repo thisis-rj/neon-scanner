@@ -66,16 +66,21 @@ Our usage: ~3 min/day × 22 weekdays ≈ **66 min/month**. ~3% of the budget.
 2. **Environment variables** (Project Settings → Environment Variables):
    - `SUPABASE_URL` — same as above
    - `SUPABASE_SECRET_KEY` — same as above (server-side reads only)
-   - Apply to: Production + Preview + Development
+   - Apply to: Production + Preview + Development (preview builds of branches need them too, or every page errors)
 
-3. **Deploy** — Vercel builds + deploys on push to `main`.
+3. **Production branch** (Project Settings → Environments → Production): `main`.
 
-4. **Get the URL** — Vercel assigns a `*.vercel.app` URL. Visit `/flows` there.
+### How deploys work
+
+- Push to `main` → production deploy. Push to any other branch (or open a PR) → preview deploy at its own URL, linked from the PR.
+- `scripts/deploy.sh "msg"` = commit + push (plus an empty keep-alive commit when nothing changed — see §1 on the 60-day cron rule).
+- Never `vercel --prod` by hand: production must always equal `main`.
+- Rollback: Vercel dashboard → Deployments → previous production deploy → "Promote to Production", then revert the commit on `main` so git matches.
 
 ### What the user sees
 
-- `/flows` reads directly from Supabase via the server component (no client-side DB access).
-- The staleness banner at the top of `/flows` flips visible the moment any ingest source falls behind threshold. So you'll see degradation without checking logs.
+- Every page reads directly from Supabase in a server component on each request (no client-side DB access, no build-time snapshot).
+- The Filings page header shows the age of the newest filing and turns amber after 7 days, so a stalled ingest is visible without checking logs.
 
 ---
 
