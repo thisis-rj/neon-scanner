@@ -30,6 +30,8 @@ This is the most important property. The system actively suppresses late-stage e
 - No "trending", "momentum leaders", "what's hot" surface anywhere. Ever.
 - Existing positions get exit-rule monitoring; that is the only place rising prices generate signals, and the signal is *evaluate exit*, not *add*.
 
+**Note — personal strategy trackers (added 2026-10-03 at Vijay's request).** A user's own written, rules-based strategy may be tracked on its own clearly-labelled tab. Today that is exactly one: **Lag7** (`/lag7`; `ingest/mag7.py`, migration 030), which ranks the Mag7 plus SpaceX by 3/6/12-month return each month-end and buys the *worst* average rank. Buying the laggard is the opposite of FOMO, so it fits this section's intent; it is still a ranked-by-return table, allowed only because it is a fixed universe the user chose (Mag7 + SpaceX) — it surfaces no new tickers, feeds no other page or signal, and executes nothing. This note is also the exception for its equity chart (§7.7 "no charts of your own portfolio's performance") and its history backfill (§8 "backtesting framework"). The backfill starts 2025-01-01 — after the Mag7 were named in 2023 — and must never be extended earlier: before 2023 the list itself is hindsight (every past laggard among them recovered). The page must say the 2025–26 months are a backtest. A "trending" / momentum-leaders surface still violates this section.
+
 ### 2.3 Exit rules are non-negotiable
 When an exit rule fires, the UI must surface it with equal or greater prominence than any entry signal. Exit rules cannot be snoozed in code, only acknowledged. The system is more useful at preventing losses than finding winners; treat that asymmetry as a design constraint.
 

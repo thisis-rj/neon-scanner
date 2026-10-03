@@ -2,6 +2,22 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-10-03 — Light/dark toggle, Lag7 tab (Mag7 laggard sleeve)
+
+Authors: Vijay (with Claude).
+
+### Light / dark mode
+
+- Sun/moon button in the header (`components/app/theme-toggle.tsx`, `next-themes`). Dark stays the default; the choice is remembered per browser. The light palette already existed in `globals.css`; it was just never switched on.
+
+### Lag7 — personal Mag7 laggard sleeve tracker (`/lag7`)
+
+- **Rule note:** `CLAUDE.md` §2.2 now has a note allowing this one personal ranked-by-return tracker; the same note is the exception for its equity chart (§7.7) and backfill (§8). Read it before building anything similar.
+- **Rule:** month-end ranks of AAPL MSFT GOOGL AMZN NVDA META TSLA + SpaceX (SPCX, listed 2026-06-12) on 3/6/12-month total return; the **worst** average rank is bought (tie → lower return on the longest horizon each has). SpaceX is ranked only on the returns it has (3-month from the 2026-09-30 signal) — migration `031` makes those columns nullable. $100,000 sleeve switches on the next trading day, or holds. Tracks and recommends; never trades.
+- **Data:** `ingest/mag7.py` (daily job step, after earnings) → migrations `030_mag7_sleeve.sql` (5 tables) + `031_lag7_spacex_sp500.sql`. Benchmark is the S&P 500 total return index (`^SP500TR`), not SPY. Signals, ranks and model trades are frozen once written. The sleeve starts 2025-01-01 (`SLEEVE_START`): first signal 2024-12-31, first model buy 2025-01-02; backfilled to 2026-09-30 (22 month-ends), all labelled `backtest`; a signal is `live` only if saved before its trade day closed. Falls back to Yahoo's chart API when yfinance is rate-limited. Tests: `tests/test_mag7.py`.
+- **Your real trades:** typed in on the page (date, side, ticker, price, amount, shares — fill any two of the last three). Server refuses selling shares the ledger didn't buy and spending past $100,000. Writes need `MAG7_EDIT_PASSCODE` set on the server; unset = read-only. **Production needs it added in Vercel** (Riya's project).
+- **Charts:** shadcn `chart` (recharts). New tokens `--chart-1..3` = series identity only, validated for colour-blind separation in both themes.
+
 ## 2026-10-03 — 13F holdings counted correctly; Form 4 fields fixed
 
 Author: Vijay (with Claude). Branch `fix/data-correctness`, rebased onto `040906c`.
