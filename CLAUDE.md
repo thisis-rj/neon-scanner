@@ -107,7 +107,8 @@ There will be weeks where nothing surfaces. That is correct behavior. Do not add
 
 - `tracked_filers` — the universe of 13F/13D filers we watch (CIK, name, category, multiplier).
 - `filings_raw` — every fetched filing, deduped by accession number. Source of truth.
-- `holdings_13f` — flattened per-position rows from 13F-HR filings.
+- `holdings_13f` — flattened per-position rows from 13F-HR/A filings, as reported (includes options and bond principal).
+- `holdings_13f_effective` (view) — the rows every reader uses: a filer's actual long-equity holdings per quarter (§6.1).
 - `events_13d` — 13D/G filings parsed for activist stake disclosures.
 - `events_form4` — insider transactions.
 - `tickers` — the investable universe with the latest snapshot of price + return windows.
@@ -141,6 +142,7 @@ If a future maintainer wants to add or remove a filer, the test is:
 ### 6.1 13F-HR (45-day delay; surface this caveat in UI)
 - Diff each filer's current 13F vs prior. Emit `new_position`, `add`, `trim`, `exit`.
 - A position is "new" if the ticker wasn't in the prior 13F. Adds/trims are ≥10% share-count change.
+- **Read holdings only through `holdings_13f_effective`** (migration 019). Per (filer, quarter) it takes the latest original-or-RESTATEMENT filing that has rows, plus NEW HOLDINGS amendments filed after it, and drops put/call rows and PRN rows (`sh_type`; bond principal in dollars, not shares). A RESTATEMENT replaces the original; a NEW HOLDINGS amendment only adds the positions the filer had kept confidential (Berkshire Q1-2025: 110 + 4). Never dedupe "latest filing wins" in a reader — that drops the original when a NEW HOLDINGS amendment exists.
 
 ### 6.2 13D / 13G
 - New 13D from a filer in the `activist` category → highest-weight signal in the system.
@@ -148,8 +150,11 @@ If a future maintainer wants to add or remove a filer, the test is:
 - Amendments (13D/A) parsed but weighted lower than initial.
 
 ### 6.3 Form 4 (insider transactions)
-- Open-market buys by officers/directors. Sales mostly ignored (planned 10b5-1s are noisy).
-- Cluster bonus: ≥3 insiders buying in 30-day window.
+- Open-market buys (code P). Sales ignored.
+- An insider counts toward the cluster only if their buys of the ticker in the 30-day window pass `insider_filters` in `config/signal_weights.yml`: officer or director; not a Rule 10b5-1 plan buy; ≥ $25k in total; grows their holding ≥ 10% (first purchase passes). Buys are judged per insider, not per row. Unknown inputs never exclude anyone.
+- Excluded insiders are stored in `components.insider_cluster.excluded` with the reason and shown on /signals (§2.4).
+- Cluster scoring: 1 / 2 / 3+ qualifying insiders → 1.5 / 3.5 / 7.0 (+1 each beyond 3).
+- SEC spells flags several ways ("1"/"true", "TenPercentOwner"); parse them with `ingest/form4_fields.py`, never with ad-hoc string checks.
 
 ### 6.4 Confluence scoring
 For each ticker on each day, sum the weighted signals from the last `window_days` (see `config/signal_weights.yml`). Apply per-filer `multiplier`. Output:
@@ -262,7 +267,7 @@ These strings live in the UI, not just this doc.
 - Never add a new composite metric without flagging §2.4.
 - Never add a "discovery" or "trending" surface without flagging §2.2.
 - If the user asks for a feature in §8, push back before implementing.
-- Tests: parsers must have fixture-based tests. Scorers must have unit tests. UI does not need tests for v1.
+- Tests: parsers must have fixture-based tests. Scorers must have unit tests. UI does not need tests for v1. Run `python -m pytest -q` and `cd tests/sql && npm ci && node --test`. Scoring changes: replay old vs new with `scripts/diff_signals.py` and account for every changed ticker.
 - Commits: small, focused, conventional-commits style. One logical change per commit.
 - Building UI: follow [web/AGENTS.md](web/AGENTS.md) — shadcn/ui components, semantic color tokens, never raw Tailwind palette colors.
 - Recent changes and known open issues: [CHANGELOG.md](CHANGELOG.md). Add an entry when you change behavior others rely on.
