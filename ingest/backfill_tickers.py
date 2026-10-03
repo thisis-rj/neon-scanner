@@ -139,6 +139,9 @@ def main() -> None:
             print(f"  {updated:,} / {len(matched):,}", flush=True)
 
     print(f"\nDone. Updated {updated:,} rows.", flush=True)
+    # Readers use the stored copy (migration 025); carry the new tickers into it.
+    sb.rpc("refresh_holdings_effective").execute()
+    print("Refreshed holdings_13f_effective.", flush=True)
 
 
 if __name__ == "__main__":

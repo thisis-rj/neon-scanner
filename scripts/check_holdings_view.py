@@ -1,7 +1,8 @@
 """Check holdings_13f_effective against an independent re-implementation of its rule.
 
-Read-only. Run after `python -m ingest.migrate` (023) and
-`python -m ingest.parse_13f --reparse`, before deploying:
+Read-only. Run after `python -m ingest.migrate` (023, 025) and
+`python -m ingest.parse_13f --reparse` (which refreshes the stored copy that
+readers use, migration 025), before deploying:
 
   python scripts/check_holdings_view.py                      # against Supabase
   python scripts/check_holdings_view.py --snapshot s.json.gz # against a diff_signals snapshot

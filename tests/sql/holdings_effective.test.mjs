@@ -1,4 +1,5 @@
-// Tests for the holdings_13f_effective view and holdings_recent() RPC (migration 023).
+// Tests for the holdings_13f_effective rule (migration 023, now holdings_13f_effective_live),
+// its stored copy and refresh (migration 025), and the holdings_recent() RPC.
 //
 // Runs the real migration SQL in PGlite (Postgres compiled to WASM), so the
 // view's replace/union rules are checked without touching Supabase.
@@ -9,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 
 const MIGRATION = readFileSync(new URL("../../schema/migrations/023_holdings_effective.sql", import.meta.url), "utf8");
+const MATERIALIZE = readFileSync(new URL("../../schema/migrations/025_holdings_effective_materialized.sql", import.meta.url), "utf8");
 
 // Minimal copies of the two tables as they exist before 023 (schema/supabase.sql).
 const BASE_SCHEMA = `
@@ -20,12 +22,14 @@ create table holdings_13f (
   id serial primary key, filing_id text not null references filings_raw(id) on delete cascade,
   cik text not null, period_of_report date not null, cusip text, ticker text, issuer_name text,
   shares bigint, value_usd numeric, put_call text
-);`;
+);
+create role anon; create role authenticated; create role service_role;`;
 
-async function db() {
+async function db({ materialize = true } = {}) {
   const pg = new PGlite();
   await pg.exec(BASE_SCHEMA);
   await pg.exec(MIGRATION);
+  if (materialize) await pg.exec(MATERIALIZE);
   return pg;
 }
 
@@ -49,7 +53,7 @@ async function rows(pg, filingId, list) {
 }
 async function effective(pg, cik = "1", period = "2026-06-30") {
   const r = await pg.query(
-    `select filing_id, ticker, shares from holdings_13f_effective where cik = $1 and period_of_report = $2 order by ticker, filing_id, shares`,
+    `select filing_id, ticker, shares from holdings_13f_effective_live where cik = $1 and period_of_report = $2 order by ticker, filing_id, shares`,
     [cik, period],
   );
   return r.rows.map((x) => `${x.ticker}@${x.filing_id}:${x.shares}`);
@@ -178,6 +182,7 @@ test("holdings_recent() returns the 2 latest periods per filer from the view", a
   }
   await filing(pg, { id: "n", period: "2026-06-30", filed: "2026-08-30", form: "13F-HR/A", amendment: "NEW HOLDINGS" });
   await rows(pg, "n", [{ t: "SECRET" }]);
+  await pg.exec("select refresh_holdings_effective()");
   const r = await pg.query(`select period_of_report::text as p, ticker, put_call, filer_name from holdings_recent(2) order by p, ticker`);
   assert.deepEqual(
     r.rows.map((x) => `${x.p} ${x.ticker} ${x.put_call}`),
@@ -186,9 +191,27 @@ test("holdings_recent() returns the 2 latest periods per filer from the view", a
   assert.equal(r.rows[0].filer_name, "Fund 1");
 });
 
-test("migration is re-runnable", async () => {
+test("023 is re-runnable on its own, and 025 is re-runnable", async () => {
+  const plain = await db({ materialize: false });
+  await plain.exec(MIGRATION);
   const pg = await db();
-  await pg.exec(MIGRATION);
+  await pg.exec(MATERIALIZE);
+});
+
+// Value: protects=readers see the stored copy, which equals the live rule after refresh_holdings_effective() and not before; fails_when=the refresh function breaks (e.g. CONCURRENTLY without the unique index) or readers bypass the stored copy; why_new=all other tests read the live rule; seam=none
+test("stored copy matches the live rule after refresh, and only after", async () => {
+  const pg = await db();
+  await filing(pg, { id: "o", filed: "2026-08-05" });
+  await rows(pg, "o", [{ t: "AAA" }, { t: "HEDGE", pc: "Put" }]);
+  const stored = async () => (await pg.query(
+    "select ticker from holdings_13f_effective order by ticker")).rows.map((x) => x.ticker);
+  assert.deepEqual(await stored(), []);          // not refreshed yet
+  await pg.exec("select refresh_holdings_effective()");
+  assert.deepEqual(await stored(), ["AAA"]);
+  await filing(pg, { id: "r", filed: "2026-09-01", form: "13F-HR/A", amendment: "RESTATEMENT" });
+  await rows(pg, "r", [{ t: "BBB" }]);
+  await pg.exec("select refresh_holdings_effective()");  // concurrent refresh over existing rows
+  assert.deepEqual(await stored(), ["BBB"]);
 });
 
 // Value: protects=a same-day 13F-HR/A RESTATEMENT replaces its original (filed_at is date-only, ids are random UUIDs); fails_when=base tie-break on filed_at falls to id order and picks the original; why_new=all existing restatement cases file the amendment on a later day; seam=none
