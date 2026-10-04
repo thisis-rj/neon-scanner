@@ -671,7 +671,7 @@ function PersonView({
       </div>
 
       {myHoldings.length > 0 && (
-        <TableCard title="Open positions" description="Live prices from Yahoo · average-cost basis.">
+        <TableCard title="Open positions" description="Yahoo prices (end-of-day) · average-cost basis.">
           <Table>
             <TableHeader>
               <TableRow>
