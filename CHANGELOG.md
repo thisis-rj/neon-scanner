@@ -2,6 +2,13 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-10-04 — Server functions run in Singapore, next to the database
+
+Author: Vijay (with Claude). Branch `perf/sin1-region`.
+
+- New `web/vercel.json` pins Vercel functions to **`sin1`** (Singapore). Supabase lives in `ap-southeast-1` (Singapore), but with no region set Vercel ran every page in `iad1` (Washington DC), so each database call crossed the Pacific: ~0.5 s per call. Measured before the change: Filings 7–10 s, Funds 4.6 s, Earnings 3 s, Holdings 30–38 s of server wait, almost all of it travel.
+- Still open: Holdings makes 67 database calls per load, Filings downloads all ~8.5K filings to show 50, and `fund_flows()` re-runs once per 1,000 rows. Those are the next fixes.
+
 ## 2026-10-03 — /funds: which stocks the tracked funds are buying or leaving, by industry
 
 Author: Vijay (with Claude). Branch `feat/fund-flows`. Spec and eng review: `~/Launcher/docs/neon-fund-flow-list-spec.md`.
