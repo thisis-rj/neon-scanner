@@ -16,7 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Pct, TierBadge } from "@/components/app/cells";
-import { fmtInr, fmtQty, fmtShares, fmtUsd, fmtUsdExact, shortDate } from "@/lib/format";
+import { daysAgo, fmtInr, fmtQty, fmtShares, fmtUsd, fmtUsdExact, shortDate } from "@/lib/format";
 
 type Analysis = Awaited<ReturnType<typeof getStockAnalysis>>;
 
@@ -258,6 +258,16 @@ export type SellLog = {
 };
 
 export type PocketCash = { deposited: number; withdrawn: number; net: number };
+
+export type StockSignals = {
+  insiderBuys: { count: number; latest: string | null };
+  insiderSells: { count: number; latest: string | null };
+  fundAdded: number;
+  fundTrimmed: number;
+  fundPeriod: string | null;
+  activist: { subtype: string; filer: string; date: string } | null;
+  buyScore: number | null;
+};
 
 const PEOPLE = ["Riya", "Vijay"] as const;
 type Person = (typeof PEOPLE)[number];
@@ -596,6 +606,79 @@ function PocketBand({ cash, value, usdInr }: { cash: PocketCash; value: number; 
   );
 }
 
+function sigHasActivity(s: StockSignals): boolean {
+  return (
+    s.insiderBuys.count > 0 ||
+    s.insiderSells.count > 0 ||
+    s.fundAdded > 0 ||
+    s.fundTrimmed > 0 ||
+    !!s.activist ||
+    (s.buyScore != null && s.buyScore > 0)
+  );
+}
+function sigLatest(s: StockSignals): string {
+  return [s.insiderBuys.latest, s.insiderSells.latest, s.activist?.date ?? null]
+    .filter(Boolean)
+    .sort()
+    .reverse()[0] as string ?? "";
+}
+
+function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockSignals }[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <Card size="sm">
+      <CardHeader className="border-b">
+        <CardTitle className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          Signals on your stocks
+        </CardTitle>
+        <CardAction className="text-[11px] text-muted-foreground">
+          insider + activist = last 90 days (dated) · 13F = latest quarter, 45-day delayed
+        </CardAction>
+      </CardHeader>
+      <CardContent className="flex flex-col divide-y divide-border">
+        {rows.map(({ ticker, name, s }) => (
+          <div key={ticker} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2 text-xs first:pt-0 last:pb-0">
+            <span className="w-32 shrink-0 truncate">
+              <span className="font-mono font-medium text-foreground">{ticker}</span>
+              <span className="ml-1.5 text-muted-foreground">{name}</span>
+            </span>
+            {s.insiderSells.count > 0 && (
+              <Badge variant="negative" className="font-normal">
+                ▼ {s.insiderSells.count} insider sell{s.insiderSells.count > 1 ? "s" : ""}
+                {s.insiderSells.latest ? ` · ${daysAgo(s.insiderSells.latest)}` : ""}
+              </Badge>
+            )}
+            {s.insiderBuys.count > 0 && (
+              <Badge variant="positive" className="font-normal">
+                ▲ {s.insiderBuys.count} insider buy{s.insiderBuys.count > 1 ? "s" : ""}
+                {s.insiderBuys.latest ? ` · ${daysAgo(s.insiderBuys.latest)}` : ""}
+              </Badge>
+            )}
+            {(s.fundAdded > 0 || s.fundTrimmed > 0) && (
+              <span className="text-muted-foreground">
+                funds <span className="text-positive">+{s.fundAdded}</span>
+                <span className="mx-0.5">/</span>
+                <span className="text-negative">−{s.fundTrimmed}</span>
+                {s.fundPeriod ? ` (${s.fundPeriod.slice(0, 7)})` : ""}
+              </span>
+            )}
+            {s.activist && (
+              <Badge variant="warning" className="font-normal">
+                {s.activist.subtype} · {s.activist.filer} · {daysAgo(s.activist.date)}
+              </Badge>
+            )}
+            {s.buyScore != null && s.buyScore > 0 && (
+              <Badge variant="info" className="font-normal" title="Confluence buy-signal score (open a row for its components)">
+                Buy signal {s.buyScore.toFixed(0)}
+              </Badge>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 function PersonView({
   person,
   holdings,
@@ -603,6 +686,7 @@ function PersonView({
   cash,
   usdInr,
   pricesAsOf,
+  signals,
 }: {
   person: Person;
   holdings: Holding[];
@@ -610,6 +694,7 @@ function PersonView({
   cash?: PocketCash;
   usdInr: number | null;
   pricesAsOf: string | null;
+  signals: Record<string, StockSignals>;
 }) {
   // Sorted by current market value (qty × current price), largest first.
   const curVal = (h: Holding) => h.qty * (h.current_price ?? h.avg_cost);
@@ -633,6 +718,12 @@ function PersonView({
   }
   const winRate = mySells.length ? Math.round((wins / mySells.length) * 100) : 0;
 
+  // Active-signal rows for this person's holdings, freshest activity first.
+  const sigRows = myHoldings
+    .map((h) => ({ ticker: h.ticker, name: h.stock_name ?? h.ticker, s: signals[h.ticker] }))
+    .filter((r): r is { ticker: string; name: string; s: StockSignals } => !!r.s && sigHasActivity(r.s))
+    .sort((a, b) => sigLatest(b.s).localeCompare(sigLatest(a.s)));
+
   if (myHoldings.length === 0 && mySells.length === 0 && !cash) {
     return (
       <Empty className="border py-16">
@@ -650,6 +741,8 @@ function PersonView({
   return (
     <div className="flex flex-col gap-5">
       {cash && <PocketBand cash={cash} value={value} usdInr={usdInr} />}
+
+      <SignalsCard rows={sigRows} />
 
       <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
         <div>
@@ -753,12 +846,14 @@ export function MyStocksTabs({
   cash = {},
   usdInr = null,
   pricesAsOf = null,
+  signals = {},
 }: {
   holdings: Holding[];
   sells: SellLog[];
   cash?: Record<string, PocketCash>;
   usdInr?: number | null;
   pricesAsOf?: string | null;
+  signals?: Record<string, StockSignals>;
 }) {
   return (
     <Tabs defaultValue={PEOPLE[0]} className="gap-4">
@@ -778,6 +873,7 @@ export function MyStocksTabs({
             cash={cash[p]}
             usdInr={usdInr}
             pricesAsOf={pricesAsOf}
+            signals={signals}
           />
         </TabsContent>
       ))}
