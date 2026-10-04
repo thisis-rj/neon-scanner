@@ -19,6 +19,7 @@ async function loadData(): Promise<{
   sells: SellLog[];
   cash: Record<string, PocketCash>;
   usdInr: number | null;
+  pricesAsOf: string | null;
 }> {
   const sb = supabaseServer();
 
@@ -38,7 +39,13 @@ async function loadData(): Promise<{
 
   const { data: posRaw } = await sb
     .from("portfolio_positions")
-    .select("person,ticker,stock_name,qty,current_price,target_price,comment");
+    .select("person,ticker,stock_name,qty,current_price,target_price,comment,updated_at");
+  // Freshness of the price snapshot (newest portfolio_positions.updated_at).
+  let pricesAsOf: string | null = null;
+  for (const p of posRaw ?? []) {
+    const u = p.updated_at == null ? null : String(p.updated_at);
+    if (u && (!pricesAsOf || u > pricesAsOf)) pricesAsOf = u;
+  }
   const meta = new Map<
     string,
     {
@@ -153,18 +160,18 @@ async function loadData(): Promise<{
   const { data: fxRaw } = await sb.from("fx_rates").select("rate").eq("pair", "USDINR").maybeSingle();
   const usdInr = fxRaw?.rate != null ? Number(fxRaw.rate) : null;
 
-  return { holdings, sells, cash, usdInr };
+  return { holdings, sells, cash, usdInr, pricesAsOf };
 }
 
 export default async function MyStocksPage() {
-  const { holdings, sells, cash, usdInr } = await loadData();
+  const { holdings, sells, cash, usdInr, pricesAsOf } = await loadData();
   return (
     <div className="flex flex-col gap-8">
       <PageHeader
         title="My Stocks"
-        description="Personal portfolios with live P&L — buy more, sell (full or partial), set targets, jot notes, and open a row for the scanner. Overall return is measured in ₹ against money actually put in from pocket."
+        description="Personal portfolios with P&L — buy more, sell (full or partial), set targets, jot notes, and open a row for the scanner. Overall return is measured in ₹ against money actually put in from pocket."
       />
-      <MyStocksTabs holdings={holdings} sells={sells} cash={cash} usdInr={usdInr} />
+      <MyStocksTabs holdings={holdings} sells={sells} cash={cash} usdInr={usdInr} pricesAsOf={pricesAsOf} />
     </div>
   );
 }

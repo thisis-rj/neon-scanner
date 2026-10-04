@@ -78,6 +78,14 @@ jobs:
         run: python -m ingest.mag7
         continue-on-error: true
 
+      - name: Refresh My Stocks prices + USD/INR (personal portfolio)
+        # Updates portfolio_positions.current_price and fx_rates (USDINR) for the
+        # /my-stocks live P&L + ₹ pocket-return band. DB-driven (--prices reads
+        # existing rows), so the gitignored ingest/portfolio_holdings.py is NOT
+        # needed in CI. ~24 held tickers + 1 FX call — a few seconds.
+        run: python -m ingest.portfolio --prices
+        continue-on-error: true
+
   # ──────────────────────────────────────────────────────────────────
   # SEC EDGAR PIPELINE — every ingest that hits sec.gov.
   # All scripts use 8 req/sec pacing (under SEC's 10/s limit).

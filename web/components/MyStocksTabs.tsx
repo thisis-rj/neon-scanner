@@ -265,6 +265,9 @@ type Person = (typeof PEOPLE)[number];
 function fmtDate(iso: string): string {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
+function fmtAsOf(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
 /** Full-precision qty for form defaults (display uses fmtQty). */
 function qtyFull(n: number): string {
   return Number(n.toFixed(6)).toString();
@@ -599,12 +602,14 @@ function PersonView({
   sells,
   cash,
   usdInr,
+  pricesAsOf,
 }: {
   person: Person;
   holdings: Holding[];
   sells: SellLog[];
   cash?: PocketCash;
   usdInr: number | null;
+  pricesAsOf: string | null;
 }) {
   // Sorted by current market value (qty × current price), largest first.
   const curVal = (h: Holding) => h.qty * (h.current_price ?? h.avg_cost);
@@ -734,8 +739,9 @@ function PersonView({
       )}
 
       <p className="text-xs text-muted-foreground/70">
-        Prices from Yahoo. Average-cost basis. Open positions reconcile to the broker; realized P&amp;L / win rate on
-        trades closed before our earliest record (Dec 2025) is approximate.
+        Prices from Yahoo{pricesAsOf ? `, as of ${fmtAsOf(pricesAsOf)}` : ""} — end-of-day, refreshed daily, not
+        intraday. Average-cost basis. Open positions reconcile to the broker; realized P&amp;L / win rate on trades
+        closed before our earliest record (Dec 2025) is approximate.
       </p>
     </div>
   );
@@ -746,11 +752,13 @@ export function MyStocksTabs({
   sells,
   cash = {},
   usdInr = null,
+  pricesAsOf = null,
 }: {
   holdings: Holding[];
   sells: SellLog[];
   cash?: Record<string, PocketCash>;
   usdInr?: number | null;
+  pricesAsOf?: string | null;
 }) {
   return (
     <Tabs defaultValue={PEOPLE[0]} className="gap-4">
@@ -769,6 +777,7 @@ export function MyStocksTabs({
             sells={sells.filter((s) => s.person === p)}
             cash={cash[p]}
             usdInr={usdInr}
+            pricesAsOf={pricesAsOf}
           />
         </TabsContent>
       ))}
