@@ -2,7 +2,12 @@ import { supabaseServer } from "@/lib/supabase";
 
 // Shapes written by ingest/earnings_test.py (score() → earnings_test_summary.data).
 
-export type Spread = { mean: number | null; t: number | null; seasons: number; positive: number };
+export type Spread = {
+  mean: number | null;
+  t: number | null;
+  seasons: number;
+  positive: number;
+};
 
 export type Quintile = {
   q: number;
@@ -14,7 +19,12 @@ export type Quintile = {
   drift_excess: number | null;
 };
 
-export type Season = { season: string; events: number; react_spread: number | null; drift_spread: number | null };
+export type Season = {
+  season: string;
+  events: number;
+  react_spread: number | null;
+  drift_spread: number | null;
+};
 
 export type CohortScore = {
   events: number;
@@ -84,5 +94,68 @@ export async function fetchEarningsTest(): Promise<EarningsTestData | null> {
       react_excess: numOrNull(r.react_excess),
       drift_excess: numOrNull(r.drift_excess),
     })) as LiveEvent[],
+  };
+}
+
+export type ExplorerData = {
+  events: import("@/lib/earnings-explore").ExploreEvent[];
+  spyDates: string[];
+  spyRet: number[];
+  sectors: string[];
+};
+
+async function fetchPaged<T>(
+  query: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await query(from, from + 999);
+    if (error) throw error;
+    out.push(...(data ?? []));
+    if (!data || data.length < 1000) return out;
+  }
+}
+
+/** Every measured report with its ±30-day return path, plus SPY's daily returns. */
+export async function fetchExplorer(): Promise<ExplorerData> {
+  const sb = supabaseServer();
+  type Row = {
+    ticker: string;
+    reaction_date: string;
+    session: "bmo" | "intraday" | "amc";
+    sector: string | null;
+    surprise_pct: number | null;
+    source: "backtest" | "live";
+    path: (number | null)[];
+  };
+  const [rows, spy] = await Promise.all([
+    fetchPaged<Row>((a, b) =>
+      sb
+        .from("earnings_test_events")
+        .select("ticker,reaction_date,session,sector,surprise_pct,source,path")
+        .in("status", ["reacted", "complete"])
+        .in("source", ["backtest", "live"])
+        .not("path", "is", null)
+        .order("ticker")
+        .order("scheduled_date")
+        .range(a, b),
+    ),
+    fetchPaged<{ date: string; ret: number }>((a, b) =>
+      sb.from("earnings_test_spy").select("date,ret").order("date").range(a, b),
+    ),
+  ]);
+  return {
+    events: rows.map((r) => ({
+      t: r.ticker,
+      d: r.reaction_date,
+      s: r.session,
+      sec: r.sector,
+      sur: r.surprise_pct == null ? null : Number(r.surprise_pct),
+      src: r.source,
+      p: r.path,
+    })),
+    spyDates: spy.map((x) => x.date),
+    spyRet: spy.map((x) => Number(x.ret)),
+    sectors: [...new Set(rows.map((r) => r.sector).filter((x): x is string => !!x))].sort(),
   };
 }

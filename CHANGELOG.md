@@ -2,6 +2,15 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-10-06 — /earnings-test: does the move before earnings predict the move after?
+
+Author: Vijay (with Claude). Branch `feat/earnings-test`.
+
+- New page **/earnings-test** (in the nav), three tabs. **Explorer:** pick any "before" and "after" window (day −30 to +30 around day 0, the first session that can react to the report), raw or minus SPY, 3/5/10 groups, ranked within each season or all together, filters for report time, EPS beat/miss and sector. Shows top − bottom group spread per season (with t and earlier-half vs later-half split), same-direction share, rank correlation, the average ±30-day path for top / bottom / all, a group table and per-season bars. All recomputed in the browser. **Fixed test:** the pre-registered rule (10 days before → reaction day and 20-day drift). **Live log:** upcoming reports written down before they happen, scored once prices exist; a row logged after its reaction session opened is marked late and not scored.
+- Data: migration **`033`** (`earnings_test_events` with a 61-day `path` of daily returns per report, `earnings_test_spy`, `earnings_test_summary`). `python -m ingest.earnings_test --backfill` loaded 5 years (from 2021-10) for the 300 largest stocks on the Earnings tab; the nightly step `python -m ingest.earnings_test` logs, measures and re-scores.
+- Caveats on the page: the backtest list is today's 300 largest (survivorship); costs are not included; the explorer finds chance patterns if you try enough windows, which is why it shows the two halves and why the live log is the real test.
+- Nav: a tab is now active only on its own path or sub-paths (`/earnings` no longer lights up on `/earnings-test`).
+
 ## 2026-10-05 — /funds: non-US stocks resolve; no more fake exit + re-open from name spellings
 
 Author: Vijay (with Claude). Branch `fix/cins-cusips`.

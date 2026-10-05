@@ -2,12 +2,14 @@ import { FlaskConicalIcon } from "lucide-react";
 import { Pct, Ticker } from "@/components/app/cells";
 import { PageHeader } from "@/components/app/page-header";
 import { TableCard } from "@/components/app/table-card";
+import { EarningsExplorer } from "@/components/app/earnings-test/explorer";
 import { SeasonChart } from "@/components/app/earnings-test/season-chart";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { fetchEarningsTest, type CohortScore, type LiveEvent, type Spread } from "@/lib/earnings-test";
+import { fetchEarningsTest, fetchExplorer, type CohortScore, type LiveEvent, type Spread } from "@/lib/earnings-test";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +17,12 @@ export const dynamic = "force-dynamic";
 // predicts the move after (CLAUDE.md §2.2 note on the earnings test). Every
 // list here is sorted by date or by group number, never by return.
 
-const SESSION = { bmo: "before open", intraday: "during market", amc: "after close", unknown: "time unknown" };
+const SESSION = {
+  bmo: "before open",
+  intraday: "during market",
+  amc: "after close",
+  unknown: "time unknown",
+};
 
 const STATUS = {
   scheduled: { variant: "muted", label: "awaiting report" },
@@ -97,9 +104,7 @@ function QuintileTable({ s }: { s: CohortScore }) {
       <TableBody>
         {s.quintiles.map((q) => (
           <TableRow key={q.q}>
-            <TableCell className="pl-6">
-              {q.q === 1 ? "1 · fell most" : q.q === 5 ? "5 · rose most" : q.q}
-            </TableCell>
+            <TableCell className="pl-6">{q.q === 1 ? "1 · fell most" : q.q === 5 ? "5 · rose most" : q.q}</TableCell>
             <TableCell className="text-right tabular-nums">{q.events.toLocaleString()}</TableCell>
             <TableCell className="text-right">
               <Pct value={q.pre_excess} fraction />
@@ -175,16 +180,15 @@ function LogTable({ rows }: { rows: LiveEvent[] }) {
 }
 
 export default async function EarningsTestPage() {
-  const data = await fetchEarningsTest();
+  const [data, explorer] = await Promise.all([fetchEarningsTest(), fetchExplorer().catch(() => null)]);
   const title = "Earnings test";
   const description = (
     <>
       Hypothesis: a stock&rsquo;s move in the 10 trading days <em>before</em> an earnings report predicts its move{" "}
       <em>after</em>. Every return here is the stock minus SPY over the same days. The reaction is the first session
       that can react to the report (the report day if it came before the open, the next day if after the close); the
-      drift is the 20 trading days after that. Each earnings season, reports are split into 5 equal groups by
-      pre-move. If the hypothesis holds, the group that rose most should beat the group that fell most, season after
-      season.
+      drift is the 20 trading days after that. Each earnings season, reports are split into 5 equal groups by pre-move.
+      If the hypothesis holds, the group that rose most should beat the group that fell most, season after season.
     </>
   );
 
@@ -227,109 +231,139 @@ export default async function EarningsTestPage() {
         }
       />
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <CohortCard
-          title="Backtest"
-          description={`Every report since ${firstBacktestSeason ?? "2021Q4"} for the 30 largest stocks on the Earnings tab, rebuilt from Yahoo history. A backtest: the list is today's 30 largest, so it is made of companies that grew; ones that shrank or were delisted are missing.`}
-          s={backtest}
-        />
-        <CohortCard
-          title="Live log"
-          description="Each upcoming report is written down before it happens, then measured once prices exist. This is the clean test; it grows by roughly one season per quarter."
-          s={live}
-        />
-      </div>
+      <Tabs defaultValue="explore" className="gap-6">
+        <TabsList variant="line">
+          <TabsTrigger value="explore">Explorer</TabsTrigger>
+          <TabsTrigger value="fixed">Fixed test</TabsTrigger>
+          <TabsTrigger value="live">Live log</TabsTrigger>
+        </TabsList>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>How to read the numbers</CardTitle>
-        </CardHeader>
-        <CardContent className="flex max-w-3xl flex-col gap-2 text-sm text-pretty text-muted-foreground">
-          <p>
-            <strong className="font-medium text-foreground">Top − bottom group</strong> is the average reaction of
-            the 20% of reports whose stock rose most beforehand, minus the 20% that fell most, averaged over seasons.
-            Above zero means moves continued; below zero means they reversed.
-          </p>
-          <p>
-            <strong className="font-medium text-foreground">t</strong> is that average divided by its standard
-            error across seasons. Beyond ±2 is unlikely to be chance (about 1 in 20). Seasons with fewer than 25
-            reports aren&rsquo;t scored. With 30 stocks a group holds about 6 reports, so one season alone says
-            little; the count across seasons is what matters.
-          </p>
-          <p>
-            The windows (10 days before, reaction session, 20 days after) were fixed before any result was seen.
-            Trying other windows on the same data would find one that &ldquo;works&rdquo; by chance. Returns
-            exclude trading costs, which are highest around earnings.
-          </p>
-        </CardContent>
-      </Card>
+        <TabsContent value="explore">
+          {explorer && explorer.events.length > 0 ? (
+            <EarningsExplorer
+              events={explorer.events}
+              spyDates={explorer.spyDates}
+              spyRet={explorer.spyRet}
+              sectors={explorer.sectors}
+              hasLive={explorer.events.some((e) => e.src === "live")}
+            />
+          ) : (
+            <Empty className="border py-16">
+              <EmptyDescription>
+                No return paths stored yet. Run python -m ingest.earnings_test --backfill.
+              </EmptyDescription>
+            </Empty>
+          )}
+        </TabsContent>
 
-      <TableCard
-        title="Backtest by pre-move group"
-        description="Groups are formed within each season, then pooled. Group 1 fell most against SPY in the 10 days before the report; group 5 rose most."
-      >
-        {backtest.quintiles.length === 0 ? (
-          <Empty className="py-10">
-            <EmptyDescription>No season has 25 reports yet.</EmptyDescription>
-          </Empty>
-        ) : (
-          <QuintileTable s={backtest} />
-        )}
-      </TableCard>
+        <TabsContent value="fixed" className="flex flex-col gap-8">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <CohortCard
+              title="Backtest"
+              description={`Every report since ${firstBacktestSeason ?? "2021Q4"} for the 30 largest stocks on the Earnings tab, rebuilt from Yahoo history. A backtest: the list is today's 30 largest, so it is made of companies that grew; ones that shrank or were delisted are missing.`}
+              s={backtest}
+            />
+            <CohortCard
+              title="Live log"
+              description="Each upcoming report is written down before it happens, then measured once prices exist. This is the clean test; it grows by roughly one season per quarter."
+              s={live}
+            />
+          </div>
 
-      {live && live.quintiles.length > 0 && (
-        <TableCard title="Live log by pre-move group" description="Same table, live log only.">
-          <QuintileTable s={live} />
-        </TableCard>
-      )}
+          <Card>
+            <CardHeader>
+              <CardTitle>How to read the numbers</CardTitle>
+            </CardHeader>
+            <CardContent className="flex max-w-3xl flex-col gap-2 text-sm text-pretty text-muted-foreground">
+              <p>
+                <strong className="font-medium text-foreground">Top − bottom group</strong> is the average reaction of
+                the 20% of reports whose stock rose most beforehand, minus the 20% that fell most, averaged over
+                seasons. Above zero means moves continued; below zero means they reversed.
+              </p>
+              <p>
+                <strong className="font-medium text-foreground">t</strong> is that average divided by its standard error
+                across seasons. Beyond ±2 is unlikely to be chance (about 1 in 20). Seasons with fewer than 25 reports
+                aren&rsquo;t scored. With 30 stocks a group holds about 6 reports, so one season alone says little; the
+                count across seasons is what matters.
+              </p>
+              <p>
+                The windows (10 days before, reaction session, 20 days after) were fixed before any result was seen.
+                Trying other windows on the same data would find one that &ldquo;works&rdquo; by chance. Returns exclude
+                trading costs, which are highest around earnings.
+              </p>
+            </CardContent>
+          </Card>
 
-      <TableCard
-        title="Top − bottom group, season by season (backtest)"
-        description="One experiment per earnings season. If the pre-move predicts the reaction, the bars sit on the same side of zero most seasons."
-      >
-        <div className="px-6 pb-2">
-          <SeasonChart data={backtest.seasons} />
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="pl-6">Season</TableHead>
-              <TableHead className="text-right">Reports</TableHead>
-              <TableHead className="text-right">Reaction day</TableHead>
-              <TableHead className="pr-6 text-right">Next 20 days</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {[...backtest.seasons].reverse().map((s) => (
-              <TableRow key={s.season}>
-                <TableCell className="pl-6 font-mono text-xs">{s.season}</TableCell>
-                <TableCell className="text-right tabular-nums">{s.events.toLocaleString()}</TableCell>
-                <TableCell className="text-right">
-                  <Pct value={s.react_spread} fraction />
-                </TableCell>
-                <TableCell className="pr-6 text-right">
-                  <Pct value={s.drift_spread} fraction />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableCard>
+          <TableCard
+            title="Backtest by pre-move group"
+            description="Groups are formed within each season, then pooled. Group 1 fell most against SPY in the 10 days before the report; group 5 rose most."
+          >
+            {backtest.quintiles.length === 0 ? (
+              <Empty className="py-10">
+                <EmptyDescription>No season has 25 reports yet.</EmptyDescription>
+              </Empty>
+            ) : (
+              <QuintileTable s={backtest} />
+            )}
+          </TableCard>
 
-      <TableCard
-        title="Live log"
-        description="Newest first. Reports are logged up to 7 days ahead from the Earnings tab's calendar. A report logged after its reaction session opened is marked 'logged late' and left out of the score."
-      >
-        {log.length === 0 ? (
-          <Empty className="py-10">
-            <EmptyDescription>
-              Nothing logged yet. The daily job logs reports scheduled in the next 7 days.
-            </EmptyDescription>
-          </Empty>
-        ) : (
-          <LogTable rows={log} />
-        )}
-      </TableCard>
+          {live && live.quintiles.length > 0 && (
+            <TableCard title="Live log by pre-move group" description="Same table, live log only.">
+              <QuintileTable s={live} />
+            </TableCard>
+          )}
+
+          <TableCard
+            title="Top − bottom group, season by season (backtest)"
+            description="One experiment per earnings season. If the pre-move predicts the reaction, the bars sit on the same side of zero most seasons."
+          >
+            <div className="px-6 pb-2">
+              <SeasonChart data={backtest.seasons} />
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-6">Season</TableHead>
+                  <TableHead className="text-right">Reports</TableHead>
+                  <TableHead className="text-right">Reaction day</TableHead>
+                  <TableHead className="pr-6 text-right">Next 20 days</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {[...backtest.seasons].reverse().map((s) => (
+                  <TableRow key={s.season}>
+                    <TableCell className="pl-6 font-mono text-xs">{s.season}</TableCell>
+                    <TableCell className="text-right tabular-nums">{s.events.toLocaleString()}</TableCell>
+                    <TableCell className="text-right">
+                      <Pct value={s.react_spread} fraction />
+                    </TableCell>
+                    <TableCell className="pr-6 text-right">
+                      <Pct value={s.drift_spread} fraction />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableCard>
+        </TabsContent>
+
+        <TabsContent value="live">
+          <TableCard
+            title="Live log"
+            description="Newest first. Reports are logged up to 7 days ahead from the Earnings tab's calendar. A report logged after its reaction session opened is marked 'logged late' and left out of the score."
+          >
+            {log.length === 0 ? (
+              <Empty className="py-10">
+                <EmptyDescription>
+                  Nothing logged yet. The daily job logs reports scheduled in the next 7 days.
+                </EmptyDescription>
+              </Empty>
+            ) : (
+              <LogTable rows={log} />
+            )}
+          </TableCard>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
