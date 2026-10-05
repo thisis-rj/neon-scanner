@@ -170,3 +170,37 @@ def test_spy_returns():
     closes[BENCH] = [100 * 1.001 ** i for i in range(len(closes))]
     rows = et.spy_returns(closes, closes.index[2].date())
     assert rows[0]["date"] == closes.index[2].date() and rows[0]["ret"] == pytest.approx(0.001)
+
+
+def test_volume_path_relative_to_normal():
+    closes = make_closes(end="2024-08-30", X=lambda i: 100.0)
+    vol = pd.Series(1_000.0, index=closes.index)
+    r = 120
+    vol.iloc[r - 1] = 3_000.0                      # day R-1: 3x normal
+    p = et.volume_path(vol, r)
+    assert len(p) == et.PATH_DAYS and p[-1] == 300 and p[0] == 100
+    assert et.volume_path(vol, 60) is None         # not enough history for the 60-day baseline
+
+
+def test_ma_gap():
+    closes = make_closes(end="2024-12-31", X=lambda i: 100 + i)
+    r = 250
+    s = closes["X"]
+    assert et.ma_gap(s, r, 50) == pytest.approx(s.iloc[r - 1] / s.iloc[r - 50:r].mean() - 1)
+    assert et.ma_gap(s, 100, 200) is None
+
+
+def test_insider_counts_use_filing_date_window():
+    rd = date(2024, 5, 1)
+    buys = [
+        {"who": "A", "filed": "2024-04-30", "usd": 100.0},
+        {"who": "A", "filed": "2024-03-01", "usd": 50.0},     # same insider, counted once
+        {"who": "B", "filed": "2024-02-01", "usd": 10.0},
+        {"who": "C", "filed": "2024-01-15", "usd": 999.0},    # 107 days before: outside 90
+        {"who": "D", "filed": "2024-05-01", "usd": 999.0},    # filed on report day: not before
+    ]
+    assert et.insider_counts(buys, rd) == (2, 160.0)
+
+
+def test_norm_ticker():
+    assert et.norm_ticker(" brk.b ") == "BRK-B"

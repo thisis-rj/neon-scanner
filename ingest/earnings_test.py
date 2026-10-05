@@ -21,6 +21,14 @@ test, not a tweak (testing many windows finds one that "works" by chance):
   0.001%; day k's return = close[R+k] / close[R+k-1] - 1), and SPY's daily
   returns go to earnings_test_spy. The /earnings-test explorer recomputes any
   window from these; the fixed windows above stay the pre-registered test.
+  Context known BEFORE the report, for cohorts:
+    vol_path   = volume on days R-30..R-1 as % of normal (average of the 60
+                 trading days before R-30);
+    ma50_gap / ma200_gap = close[R-1] vs the average of the 50 / 200 closes
+                 ending at R-1, minus 1;
+    insider_buyers / insider_buy_usd = distinct insiders with open-market
+                 buys (Form 4, code P) FILED in the 90 days before the report
+                 date — filed, so the public could have seen them.
 
 Score (per cohort): each calendar quarter of reaction days is one earnings
 season = one experiment. Within a season, split events into 5 equal groups by
@@ -63,6 +71,9 @@ MATCH_WINDOW_DAYS = 20              # Yahoo's scheduled date vs the actual repor
 NO_REPORT_AFTER_DAYS = 30           # scheduled date this far past with no report → 'no_report'
 BACKTEST_TICKERS = 300              # backtest = the 300 largest stocks on the Earnings tab
 PATH_DAYS = 30                      # daily returns stored from day R-30 to R+30 for the explorer
+VOL_BASE_DAYS = 60                  # "normal" volume = average of the 60 trading days before day R-30
+INSIDER_DAYS = 90                   # insider buys FILED in the 90 calendar days before the report
+PRICE_LOOKBACK_DAYS = 340           # calendar days of prices before a report: 200-day average + 30-day path
 MIN_SEASON_EVENTS = 25              # fewer events than this → the season isn't scored (5 per group)
 PACE_S = 0.3                        # between per-ticker Yahoo calls
 
@@ -101,6 +112,64 @@ def daily_path(s: pd.Series, r: int) -> list[int | None]:
             out.append(None)
         else:
             out.append(int(round((s.iloc[i] / s.iloc[i - 1] - 1) * 100_000)))
+    return out
+
+
+def volume_path(v: pd.Series, r: int) -> list[int | None] | None:
+    """Volume on days R-30..R-1 as % of the average of the 60 trading days before R-30.
+    None if that baseline has fewer than 40 days of volume."""
+    lo, hi = r - PATH_DAYS - VOL_BASE_DAYS, r - PATH_DAYS
+    if lo < 0:
+        return None
+    base = v.iloc[lo:hi]
+    base = base[base > 0].dropna()
+    if len(base) < 40:
+        return None
+    m = float(base.mean())
+    out: list[int | None] = []
+    for i in range(r - PATH_DAYS, r):
+        x = v.iloc[i]
+        out.append(None if pd.isna(x) or x <= 0 else int(round(x / m * 100)))
+    return out
+
+
+def ma_gap(s: pd.Series, r: int, n: int) -> float | None:
+    """close[R-1] / average of the n closes ending at R-1, minus 1. None without n full closes."""
+    if r - n < 0:
+        return None
+    w = s.iloc[r - n:r]
+    if w.isna().any() or (w <= 0).any():
+        return None
+    return float(w.iloc[-1] / w.mean() - 1)
+
+
+def insider_counts(buys: list[dict], report_date: date) -> tuple[int, float]:
+    """(distinct insiders, total $) among one ticker's buys FILED in the INSIDER_DAYS before the report."""
+    lo = report_date - timedelta(days=INSIDER_DAYS)
+    who, usd = set(), 0.0
+    for b in buys:
+        f = _d(b["filed"])
+        if lo <= f < report_date:
+            who.add(b["who"])
+            usd += b["usd"] or 0.0
+    return len(who), usd
+
+
+def context(closes: pd.DataFrame, volumes: pd.DataFrame | None, ticker: str, report_date: date,
+            session: str, buys: list[dict] | None) -> dict:
+    """Pre-report context for cohorts (vol_path, ma gaps, insider buys). Only keys it could compute."""
+    out: dict = {}
+    if buys is not None:
+        out["insider_buyers"], out["insider_buy_usd"] = insider_counts(buys, report_date)
+    if session == "unknown" or ticker not in closes:
+        return out
+    r = reaction_index(closes.index, report_date, session)
+    if r is None:
+        return out
+    out["ma50_gap"] = ma_gap(closes[ticker], r, 50)
+    out["ma200_gap"] = ma_gap(closes[ticker], r, 200)
+    if volumes is not None and ticker in volumes:
+        out["vol_path"] = volume_path(volumes[ticker].reindex(closes.index), r)
     return out
 
 
@@ -315,32 +384,39 @@ def last_final_close(now: datetime) -> date:
     return now.date() if now.time() >= dtime(16, 30) else now.date() - timedelta(days=1)
 
 
-def fetch_closes(tickers: list[str], start: date, final: date) -> pd.DataFrame:
-    """Dividend-adjusted final daily closes for `tickers` + SPY, on SPY's trading days."""
+def fetch_prices(tickers: list[str], start: date, final: date) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(closes, volumes): dividend-adjusted final daily closes and share volumes for `tickers` + SPY,
+    on SPY's trading days."""
     import yfinance as yf
 
     syms = sorted(set(tickers) | {BENCH})
-    frames = []
+    frames, vframes = [], []
     for i in range(0, len(syms), 100):
         chunk = syms[i:i + 100]
         for attempt in range(2):
             try:
-                c = yf.download(chunk, start=str(start), auto_adjust=True, progress=False,
-                                threads=True)["Close"]
+                raw = yf.download(chunk, start=str(start), auto_adjust=True, progress=False, threads=True)
+                c, v = raw["Close"], raw["Volume"]
                 if isinstance(c, pd.Series):
-                    c = c.to_frame(chunk[0])
+                    c, v = c.to_frame(chunk[0]), v.to_frame(chunk[0])
                 frames.append(c)
+                vframes.append(v)
                 break
             except Exception as e:  # noqa: BLE001 — retry once, then skip the chunk
                 print(f"  price chunk {i}: {e}", flush=True)
                 time.sleep(5)
-    df = pd.concat(frames, axis=1) if frames else pd.DataFrame()
-    df.index = pd.DatetimeIndex(df.index).tz_localize(None).normalize()
-    df = df.loc[:, ~df.columns.duplicated()]
+    def tidy(fs: list[pd.DataFrame]) -> pd.DataFrame:
+        d = pd.concat(fs, axis=1) if fs else pd.DataFrame()
+        d.index = pd.DatetimeIndex(d.index).tz_localize(None).normalize()
+        return d.loc[:, ~d.columns.duplicated()]
+
+    df, vol = tidy(frames), tidy(vframes)
     if BENCH not in df or df[BENCH].dropna().empty:
         raise SystemExit("earnings_test: no SPY prices from Yahoo (rate-limited?) — nothing written")
     df = df[df[BENCH].notna()]  # SPY's trading calendar
-    return df[df.index <= pd.Timestamp(final)]
+    df = df[df.index <= pd.Timestamp(final)]
+    return df, vol.reindex(df.index)
+
 
 
 def yahoo_reports(ticker: str, now: datetime, limit: int = 60) -> list[dict]:
@@ -402,16 +478,99 @@ def upsert(sb, rows: list[dict]) -> None:
                                                 on_conflict="ticker,scheduled_date").execute()
 
 
-def apply_measure(row: dict, closes: pd.DataFrame, now: datetime) -> dict:
-    """Measure a row that has a report; set source 'late' if a live row was logged too late."""
+def apply_measure(row: dict, closes: pd.DataFrame, now: datetime, volumes: pd.DataFrame | None = None,
+                  buys: dict[str, list[dict]] | None = None) -> dict:
+    """Measure a row that has a report (+ its pre-report context); set source 'late' if a live row
+    was logged too late."""
     m = measure(closes, row["ticker"], _d(row["report_date"]), row["session"])
-    row = {**row, **m, "measured_at": now}
+    ctx = context(closes, volumes, row["ticker"], _d(row["report_date"]), row["session"],
+                  None if buys is None else buys.get(row["ticker"], []))
+    row = {**row, **m, **ctx, "measured_at": now}
     if row["source"] == "live" and m.get("reaction_date"):
         reg = row["registered_at"]
         reg = reg if isinstance(reg, datetime) else datetime.fromisoformat(str(reg))
         if not registered_in_time(reg, m["reaction_date"]):
             row["source"] = "late"
     return row
+
+
+def norm_ticker(t: str | None) -> str | None:
+    """Form 4 writes BRK.B; Yahoo writes BRK-B."""
+    return t.strip().upper().replace(".", "-") if t else None
+
+
+def _add_buy(out: dict[str, list[dict]], seen: set, ticker, acc, who, filed, td, shares, usd) -> None:
+    t = norm_ticker(ticker)
+    key = (acc, who, str(td), round(float(shares or 0), 4))
+    if not t or key in seen:
+        return
+    seen.add(key)
+    out.setdefault(t, []).append({"who": who, "filed": str(filed)[:10], "usd": float(usd or 0)})
+
+
+def insider_buys_db(sb, tickers: list[str], since: date) -> dict[str, list[dict]]:
+    """Open-market buys from Neon's insider_transactions (kept current by the daily Form 4 job)."""
+    out: dict[str, list[dict]] = {}
+    seen: set = set()
+    forms = sorted({t.replace("-", ".") for t in tickers} | set(tickers))
+    for i in range(0, len(forms), 100):
+        offset = 0
+        while True:
+            page = (sb.table("insider_transactions")
+                    .select("accession_number,issuer_ticker,reporter_cik,transaction_date,filed_at,shares,value_usd")
+                    .in_("issuer_ticker", forms[i:i + 100]).eq("transaction_code", "P")
+                    .gte("filed_at", str(since)).order("id").range(offset, offset + 999).execute().data)
+            for b in page:
+                _add_buy(out, seen, b["issuer_ticker"], b["accession_number"], b["reporter_cik"],
+                         b["filed_at"], b["transaction_date"], b["shares"], b["value_usd"])
+            if len(page) < 1000:
+                break
+            offset += 1000
+    out["_seen"] = seen  # type: ignore[assignment]  — lets the bulk loader skip duplicates
+    return out
+
+
+def insider_buys_bulk(out: dict[str, list[dict]], tickers: set[str], since: date, until: date) -> list[str]:
+    """Add SEC's quarterly Form 345 bulk files (read locally, never written to Neon's tables).
+    Returns the quarters it could not download."""
+    from ingest.form4_universe_bulk import download, parse_quarter
+
+    seen = out.pop("_seen", set())  # type: ignore[arg-type]
+    missing = []
+    y, q = since.year, (since.month - 1) // 3 + 1
+    while (y, q) <= (until.year, (until.month - 1) // 3 + 1):
+        z = download(f"{y}q{q}")
+        if z is None:
+            missing.append(f"{y}q{q}")
+        else:
+            for b in parse_quarter(z):
+                if norm_ticker(b["issuer_ticker"]) in tickers:
+                    _add_buy(out, seen, b["issuer_ticker"], b["accession_number"], b["reporter_cik"],
+                             b["filed_at"], b["transaction_date"], b["shares"], b["value_usd"])
+        y, q = (y + 1, 1) if q == 4 else (y, q + 1)
+    return missing
+
+
+def enrich(sb, dry_run: bool) -> list[dict]:
+    """Add pre-report context (volume, moving averages, insider buys) to every measured row."""
+    now = now_et()
+    rows = [r for r in fetch_all(sb, "earnings_test_events", "*", status=["reacted", "complete"])
+            if r.get("report_date")]
+    tickers = sorted({r["ticker"] for r in rows})
+    first = min(_d(r["report_date"]) for r in rows)
+    print(f"enrich: {len(rows)} rows, {len(tickers)} tickers, reports from {first}", flush=True)
+    closes, volumes = fetch_prices(tickers, first - timedelta(days=PRICE_LOOKBACK_DAYS), last_final_close(now))
+    since = first - timedelta(days=INSIDER_DAYS)
+    buys = insider_buys_db(sb, tickers, since)
+    missing = insider_buys_bulk(buys, set(tickers), since, now.date())
+    print(f"insider buys loaded for {len(buys)} tickers; bulk quarters not available: {missing}", flush=True)
+    out = []
+    for r in rows:
+        ctx = context(closes, volumes, r["ticker"], _d(r["report_date"]), r["session"], buys.get(r["ticker"], []))
+        out.append({**r, **ctx})
+    if not dry_run:
+        upsert(sb, out)
+    return out
 
 
 def backfill(sb, limit: int | None, dry_run: bool) -> list[dict]:
@@ -438,11 +597,12 @@ def backfill(sb, limit: int | None, dry_run: bool) -> list[dict]:
             print(f"  [{i:>4}/{len(tickers)}] events so far {len(events)}", flush=True)
         time.sleep(PACE_S)
 
-    closes = fetch_closes(tickers, BACKTEST_START - timedelta(days=60), last_final_close(now))
+    closes, volumes = fetch_prices(tickers, BACKTEST_START - timedelta(days=PRICE_LOOKBACK_DAYS),
+                                   last_final_close(now))
     sectors = sector_map(sb)
     for e in events:
         e["sector"] = sectors.get(e["ticker"])
-    rows = [apply_measure(e, closes, now) for e in events]
+    rows = [apply_measure(e, closes, now, volumes) for e in events]  # insider buys: run --enrich after
     if not dry_run:
         upsert(sb, rows)
         upsert_spy(sb, spy_returns(closes, BACKTEST_START - timedelta(days=60)))
@@ -480,10 +640,14 @@ def daily(sb, dry_run: bool) -> None:
             updates.append(row)
     to_measure = [r for r in pending if r["status"] in ("reported", "reacted") and r.get("report_date")]
     if to_measure:
-        start = min(_d(r["report_date"]) for r in to_measure) - timedelta(days=60)
-        closes = fetch_closes([r["ticker"] for r in to_measure], start, last_final_close(now))
+        first = min(_d(r["report_date"]) for r in to_measure)
+        start = first - timedelta(days=60)
+        tickers = sorted({r["ticker"] for r in to_measure})
+        closes, volumes = fetch_prices(tickers, first - timedelta(days=PRICE_LOOKBACK_DAYS), last_final_close(now))
+        buys = insider_buys_db(sb, tickers, first - timedelta(days=INSIDER_DAYS))
+        buys.pop("_seen", None)
         # Re-measured daily until complete: the post-report part of the path grows each day.
-        updates += [apply_measure(r, closes, now) for r in to_measure]
+        updates += [apply_measure(r, closes, now, volumes, buys) for r in to_measure]
         if not dry_run:
             upsert_spy(sb, spy_returns(closes, start))
     print(f"measure: {len(to_measure)} reported, {len(updates)} rows written", flush=True)
@@ -536,11 +700,21 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="compute + print; write nothing")
     ap.add_argument("--limit", type=int, default=None, help="backfill: cap tickers (largest first)")
     ap.add_argument("--csv", help="backfill: also save the measured rows to this CSV")
+    ap.add_argument("--enrich", action="store_true",
+                    help="one-off: add volume / moving-average / insider context to measured rows")
     args = ap.parse_args()
 
     from supabase import create_client
 
     sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SECRET_KEY"])
+    if args.enrich:
+        rows = enrich(sb, args.dry_run)
+        df = pd.DataFrame(rows)
+        for c in ("insider_buyers", "ma50_gap", "ma200_gap", "vol_path"):
+            print(f"  {c}: {df[c].notna().sum() if c in df else 0} of {len(df)} rows filled")
+        if args.dry_run and len(df):
+            print("  rows with insider buyers > 0:", int((df.insider_buyers.fillna(0) > 0).sum()))
+        return
     if args.backfill:
         rows = backfill(sb, args.limit, args.dry_run)
         by = pd.Series([r["status"] for r in rows]).value_counts().to_dict() if rows else {}
