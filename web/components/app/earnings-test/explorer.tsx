@@ -361,7 +361,7 @@ export function EarningsExplorer({
         <CardHeader>
           <CardTitle>Average path around the report</CardTitle>
           <CardDescription className="max-w-3xl text-pretty">
-            Average cumulative return{vs} from day −30 to +30, relative to the close the day before day 0 (so every line
+            Average cumulative return{vs}{" "}from day −30 to +30, relative to the close the day before day 0 (so every line
             crosses zero at day −1). Shaded: your &ldquo;before&rdquo; and &ldquo;after&rdquo; windows. The top and
             bottom groups are split on the &ldquo;before&rdquo; window, so they diverge there by construction; what
             matters is what they do afterwards.
