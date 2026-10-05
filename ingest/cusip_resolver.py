@@ -5,8 +5,10 @@ iShares funds share the same "ISHARES TR" prefix) or SEC-truncated names
 ("ACACIA RESH" instead of "ACACIA RESEARCH"). CUSIP is globally unique per
 security and OpenFIGI maps CUSIPs → tickers for free at 25 req/min.
 
-Idempotent — only resolves CUSIPs we haven't seen yet, plus refreshes
-last_seen_in_holdings for any that appeared in today's ingest.
+Idempotent — resolves CUSIPs we haven't seen yet, re-asks up to --retry-limit
+no-match CUSIPs last tried --retry-days ago or more, and refreshes
+last_seen_in_holdings for any that appeared in today's ingest. Letter-first
+CUSIPs (non-US issuers) are sent as CINS (figi_id_type).
 
 Usage:
   python -m ingest.cusip_resolver              # resolve all unmapped
@@ -19,7 +21,7 @@ import argparse
 import os
 import time
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +63,17 @@ def paginated(sb: Client, table: str, sel: str, **filters: Any) -> list[dict[str
     return out
 
 
+def figi_id_type(cusip: str) -> str:
+    """OpenFIGI identifier type for a 13F CUSIP column value.
+
+    Issuers outside the US get a CINS: same 9-character shape, but the first
+    character is a letter (Chubb H1467J104, Accenture G1151C101, ASML
+    N07059210). OpenFIGI answers "No identifier found" when a CINS is sent as
+    ID_CUSIP, which left all 806 letter-first CUSIPs unmapped until 2026-10-05.
+    """
+    return "ID_CINS" if cusip[:1].isalpha() else "ID_CUSIP"
+
+
 def openfigi_lookup(cusips: list[str], max_retries: int = 4) -> dict[str, dict[str, str] | None]:
     """POST a batch of CUSIPs to OpenFIGI; return {cusip → {ticker, name, ...} or None}.
 
@@ -68,7 +81,7 @@ def openfigi_lookup(cusips: list[str], max_retries: int = 4) -> dict[str, dict[s
     backfill died at 580/8097 due to a server-disconnect mid-request)."""
     if not cusips:
         return {}
-    body = [{"idType": "ID_CUSIP", "idValue": c} for c in cusips]
+    body = [{"idType": figi_id_type(c), "idValue": c} for c in cusips]
     last_exc: Exception | None = None
     for attempt in range(max_retries):
         try:
@@ -110,6 +123,10 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--limit", type=int, default=None, help="max unmapped CUSIPs to resolve this run")
     p.add_argument("--refresh", type=str, default=None, help="comma-sep CUSIPs to force re-resolve")
+    p.add_argument("--retry-days", type=int, default=30,
+                   help="re-ask OpenFIGI about no-match CUSIPs last tried this many days ago or more")
+    p.add_argument("--retry-limit", type=int, default=300,
+                   help="max no-match CUSIPs to re-ask per run, oldest attempt first (300 ≈ 75 s)")
     args = p.parse_args()
 
     sb = _supabase()
@@ -119,23 +136,35 @@ def main() -> None:
     holdings = paginated(sb, "holdings_13f", "cusip,period_of_report")
     last_seen: dict[str, str] = {}
     for h in holdings:
-        c, p_ = h["cusip"], h["period_of_report"]
+        # Upper-case: some 13Fs write 48251w104; OpenFIGI only matches 48251W104.
+        c, p_ = (h["cusip"] or "").strip().upper(), h["period_of_report"]
         if c and (c not in last_seen or p_ > last_seen[c]):
             last_seen[c] = p_
     print(f"  {len(last_seen):,} distinct CUSIPs", flush=True)
 
     # 2. Already-resolved CUSIPs
     print("Loading already-resolved CUSIPs from cusip_ticker_map…", flush=True)
-    existing = {row["cusip"]: row for row in paginated(sb, "cusip_ticker_map", "cusip,ticker")}
+    existing = {row["cusip"]: row for row in paginated(sb, "cusip_ticker_map",
+                                                         "cusip,ticker,resolved_via,resolved_at,last_seen_in_holdings")}
     print(f"  {len(existing):,} already mapped", flush=True)
 
     refresh_set = set((args.refresh or "").split(",")) if args.refresh else set()
     refresh_set.discard("")
 
     todo = [c for c in last_seen if c not in existing or c in refresh_set]
+    # A no-match used to be final, so a wrong one (all CINS, see figi_id_type)
+    # never got a second look. Re-ask the stalest ones a few hundred per run.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=args.retry_days)).isoformat()
+    retry = sorted(
+        (row["resolved_at"], c) for c, row in existing.items()
+        if c in last_seen and c not in refresh_set and not row.get("ticker")
+        and (row.get("resolved_at") or "") <= cutoff
+    )
+    todo += [c for _, c in retry[: args.retry_limit]]
     if args.limit:
         todo = todo[: args.limit]
-    print(f"  {len(todo):,} to resolve via OpenFIGI", flush=True)
+    print(f"  {len(todo):,} to resolve via OpenFIGI ({min(len(retry), args.retry_limit):,} no-match retries)",
+          flush=True)
 
     # 3. Batch through OpenFIGI
     resolved = 0
@@ -149,6 +178,7 @@ def main() -> None:
             time.sleep(RATE_LIMIT_S * 2)
             continue
         rows = []
+        now = datetime.now(timezone.utc).isoformat()
         for cusip in batch:
             r = results.get(cusip)
             rows.append({
@@ -158,6 +188,7 @@ def main() -> None:
                 "exchange": r["exchange"] if r else None,
                 "security_type": r["security_type"] if r else None,
                 "resolved_via": "openfigi" if r else "openfigi_nomatch",
+                "resolved_at": now,  # the retry clock above reads this
                 "last_seen_in_holdings": last_seen[cusip],
             })
             if r and r["ticker"]:
@@ -169,13 +200,19 @@ def main() -> None:
             print(f"  [{i + len(batch):>5}/{len(todo):>5}]  resolved={resolved} nomatch={nomatch}", flush=True)
         time.sleep(RATE_LIMIT_S)
 
-    # 4. Update last_seen for already-resolved CUSIPs that appeared this run
+    # 4. Update last_seen for already-resolved CUSIPs that appeared this run.
+    # The upsert carries resolved_via: Postgres checks NOT NULL on the proposed
+    # insert row before it sees the conflict, so {cusip, last_seen} alone failed
+    # every run (last_seen froze at 2026-03-31). Rows step 3 just wrote are
+    # skipped: their last_seen is current and `existing` has their old label.
     if existing:
+        written = set(todo)
         bulk = [
-            {"cusip": c, "last_seen_in_holdings": last_seen[c]}
-            for c in existing
-            if c in last_seen
+            {"cusip": c, "resolved_via": row["resolved_via"], "last_seen_in_holdings": last_seen[c]}
+            for c, row in existing.items()
+            if c in last_seen and c not in written and row.get("last_seen_in_holdings") != last_seen[c]
         ]
+        print(f"  updating last_seen on {len(bulk):,} rows", flush=True)
         for chunk in (bulk[i : i + 500] for i in range(0, len(bulk), 500)):
             sb.table("cusip_ticker_map").upsert(chunk, on_conflict="cusip").execute()
 

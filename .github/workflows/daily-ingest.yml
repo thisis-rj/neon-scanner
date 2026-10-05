@@ -154,9 +154,9 @@ jobs:
       - name: Resolve CUSIPs → tickers via OpenFIGI (incremental)
         # Maps CUSIPs from holdings_13f rows to tickers. Run BEFORE cost_basis
         # so cost_basis can use the freshly-resolved tickers. Idempotent —
-        # only POSTs unknown CUSIPs each run. Anonymous OpenFIGI is rate-limited
-        # at 25 req/min × 10 jobs = 250 CUSIPs/min; full backfill (~8K) once,
-        # then daily incremental is <1 min.
+        # POSTs unknown CUSIPs plus up to 300 no-match CUSIPs last tried 30+
+        # days ago. Anonymous OpenFIGI is rate-limited at 25 req/min × 10 jobs
+        # = 250 CUSIPs/min; full backfill (~8K) once, then daily is ~1-2 min.
         run: python -m ingest.cusip_resolver
         continue-on-error: true
 
