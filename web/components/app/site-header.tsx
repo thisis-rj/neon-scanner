@@ -24,10 +24,12 @@ const NAV = [
   { href: "/earnings", label: "Earnings" },
   { href: "/my-stocks", label: "My Stocks" },
   { href: "/lag7", label: "Lag7" },
+  { href: "/earnings-test", label: "Earnings test" },
 ] as const;
 
 function isActive(pathname: string, href: string) {
-  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+  // Whole path segments only: /earnings must not light up on /earnings-test.
+  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
 }
 
 function Logo() {
