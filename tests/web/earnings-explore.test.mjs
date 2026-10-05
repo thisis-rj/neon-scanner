@@ -115,3 +115,40 @@ test("meanT and spearman", () => {
   close(spearman([1, 2, 3, 4], [10, 20, 30, 40]), 1);
   close(spearman([1, 2, 3, 4], [4, 3, 2, 1]), -1);
 });
+
+import { answer, patternsOf, DEFAULT_ANSWER } from "../../web/lib/earnings-explore.ts";
+
+test("patternsOf: named shapes over a window of daily returns", () => {
+  assert.deepEqual(patternsOf([0.01, 0.01, 0.01, -0.001]).sort(), ["up_days"]);
+  assert.ok(patternsOf([-0.01, -0.01, -0.01]).includes("down_days"));
+  assert.ok(patternsOf([0, 0, 0.04]).includes("jump_last"));
+  assert.ok(patternsOf([0, 0, -0.04]).includes("drop_last"));
+  assert.ok(patternsOf([-0.01, -0.01, 0.015, 0.015]).includes("dip_recover"));
+  assert.ok(patternsOf([0.01, 0.01, -0.015, -0.015]).includes("rally_fade"));
+  assert.ok(patternsOf([0.001, -0.002, 0.003]).includes("quiet"));
+  assert.ok(!patternsOf([0.001, -0.025, 0.003]).includes("quiet")); // one day beyond ±2%
+  assert.deepEqual(patternsOf([0.01, NaN]), []);
+});
+
+test("answer: 2×2 direction table, buckets, size correlation", () => {
+  // Before-move up → after up; before down → after down, twice as big: perfect continuation.
+  const events = [];
+  for (let i = 0; i < 40; i++) {
+    const x = (i % 2 ? 1 : -1) * (0.01 + i / 1000); // day -1 return
+    const p = Array(61).fill(0);
+    p[PATH_DAYS - 1] = Math.round(x * 100_000);
+    p[PATH_DAYS] = Math.round(2 * x * 100_000);
+    events.push(ev(60 + (i % 20), p));
+  }
+  const a = answer(prepare(events, DATES, DATES.map(() => 0)), { ...DEFAULT_ANSWER, pre: [-1, -1], post: [0, 0] });
+  assert.equal(a.events, 40);
+  assert.equal(a.beforeUp.events, 20);
+  assert.equal(a.beforeUp.upShare, 1);
+  assert.equal(a.beforeDown.upShare, 0);
+  assert.equal(a.dirDiff, 1);
+  close(a.corrDirection, 1);
+  close(a.corrSize, 1);
+  assert.equal(a.buckets.find((b) => b.key === "rose").events, 10); // +3%…+10%: i = 21, 23, …, 39
+  assert.equal(a.points.length, 40);
+  close(a.beforeUp.avgSize, a.beforeUp.avg);
+});

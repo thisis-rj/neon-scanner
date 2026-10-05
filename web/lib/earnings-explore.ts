@@ -330,3 +330,167 @@ function averagePath(rows: { p: Prepared; g: number }[], G: number, excess: bool
   }
   return out;
 }
+
+// ── "Answer" tab: the hypothesis asked directly ──────────────────────────────
+// Does what a stock did in the days BEFORE a report (direction, size, shape)
+// go with what it does AFTER (direction, size)? Every rule below is printed on
+// the page next to its result.
+
+export type AnswerSettings = {
+  pre: [number, number];
+  post: [number, number];
+  excess: boolean;
+  cohort: "backtest" | "live" | "both";
+};
+
+export const DEFAULT_ANSWER: AnswerSettings = { pre: [-10, -1], post: [0, 0], excess: false, cohort: "backtest" };
+
+/** Reports in a row of a breakdown table, and what happened after. */
+export type Cell = {
+  events: number;
+  upShare: number | null; // share whose after-move was up
+  upNoise: number | null; // ± range of upShare that chance alone easily produces (95%)
+  avg: number | null; // average after-move
+  median: number | null;
+  avgSize: number | null; // average |after-move|: how big, either way
+};
+
+export type BucketRow = Cell & { key: string; label: string };
+export type PatternRow = Cell & { key: string; label: string; rule: string };
+export type Point = { x: number; y: number; t: string; d: string };
+
+export type Answer = {
+  events: number;
+  all: Cell;
+  beforeUp: Cell;
+  beforeDown: Cell;
+  dirDiff: number | null; // P(after up | before up) − P(after up | before down)
+  dirNoise: number | null; // ± range of that difference from chance (95%)
+  corrDirection: number | null; // rank correlation, before vs after
+  corrSize: number | null; // rank correlation, |before| vs |after|
+  corrNoise: number | null; // ± range of a correlation from chance (95%)
+  buckets: BucketRow[];
+  patterns: PatternRow[];
+  points: Point[];
+};
+
+export const BUCKETS = [
+  { key: "fell_big", label: "Fell more than 10%", lo: -Infinity, hi: -0.1 },
+  { key: "fell", label: "Fell 3–10%", lo: -0.1, hi: -0.03 },
+  { key: "flat", label: "Within ±3%", lo: -0.03, hi: 0.03 },
+  { key: "rose", label: "Rose 3–10%", lo: 0.03, hi: 0.1 },
+  { key: "rose_big", label: "Rose more than 10%", lo: 0.1, hi: Infinity },
+] as const;
+
+export const PATTERNS = [
+  { key: "up_days", label: "Rose most days", rule: "up on at least 70% of the days (3+ day window)" },
+  { key: "down_days", label: "Fell most days", rule: "down on at least 70% of the days (3+ day window)" },
+  { key: "jump_last", label: "Big jump on the last day", rule: "last day of the window up more than 3%" },
+  { key: "drop_last", label: "Big drop on the last day", rule: "last day of the window down more than 3%" },
+  {
+    key: "dip_recover",
+    label: "Dipped, then recovered",
+    rule: "first half of the window down, second half up (4+ day window)",
+  },
+  {
+    key: "rally_fade",
+    label: "Rallied, then faded",
+    rule: "first half of the window up, second half down (4+ day window)",
+  },
+  { key: "quiet", label: "Quiet", rule: "total move within ±2% and no single day beyond ±2%" },
+] as const;
+
+/** Which named patterns a window of daily returns matches (it can match several). */
+export function patternsOf(days: number[]): string[] {
+  const n = days.length;
+  if (n === 0 || days.some((v) => Number.isNaN(v))) return [];
+  const comp = (xs: number[]) => xs.reduce((g, v) => g * (1 + v), 1) - 1;
+  const out: string[] = [];
+  const ups = days.filter((v) => v > 0).length;
+  const downs = days.filter((v) => v < 0).length;
+  if (n >= 3 && ups / n >= 0.7) out.push("up_days");
+  if (n >= 3 && downs / n >= 0.7) out.push("down_days");
+  if (days[n - 1] > 0.03) out.push("jump_last");
+  if (days[n - 1] < -0.03) out.push("drop_last");
+  if (n >= 4) {
+    const h = Math.floor(n / 2);
+    const first = comp(days.slice(0, h));
+    const second = comp(days.slice(h));
+    if (first < 0 && second > 0) out.push("dip_recover");
+    if (first > 0 && second < 0) out.push("rally_fade");
+  }
+  if (Math.abs(comp(days)) < 0.02 && days.every((v) => Math.abs(v) <= 0.02)) out.push("quiet");
+  return out;
+}
+
+function cell(ys: number[]): Cell {
+  const n = ys.length;
+  if (n === 0) return { events: 0, upShare: null, upNoise: null, avg: null, median: null, avgSize: null };
+  const p = ys.filter((y) => y > 0).length / n;
+  return {
+    events: n,
+    upShare: p,
+    upNoise: 1.96 * Math.sqrt((p * (1 - p)) / n),
+    avg: mean(ys),
+    median: median(ys),
+    avgSize: mean(ys.map(Math.abs)),
+  };
+}
+
+export function answer(prepared: Prepared[], s: AnswerSettings): Answer {
+  const [a0, a1] = s.pre;
+  const [b0, b1] = s.post;
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const pats: string[][] = [];
+  const points: Point[] = [];
+  for (const p of prepared) {
+    if (s.cohort !== "both" && p.ev.src !== s.cohort) continue;
+    let x = windowReturn(p.stock, a0, a1);
+    let y = windowReturn(p.stock, b0, b1);
+    const days: number[] = [];
+    for (let k = a0; k <= a1; k++) {
+      const v = p.stock[k + PATH_DAYS];
+      days.push(s.excess ? v - p.spy[k + PATH_DAYS] : v);
+    }
+    if (s.excess) {
+      x -= windowReturn(p.spy, a0, a1);
+      y -= windowReturn(p.spy, b0, b1);
+    }
+    if (Number.isNaN(x) || Number.isNaN(y)) continue;
+    xs.push(x);
+    ys.push(y);
+    pats.push(patternsOf(days));
+    points.push({ x, y, t: p.ev.t, d: p.ev.d });
+  }
+
+  const upY = ys.filter((_, i) => xs[i] > 0);
+  const downY = ys.filter((_, i) => xs[i] <= 0);
+  const beforeUp = cell(upY);
+  const beforeDown = cell(downY);
+  const n = xs.length;
+  const both = beforeUp.upShare != null && beforeDown.upShare != null;
+  return {
+    events: n,
+    all: cell(ys),
+    beforeUp,
+    beforeDown,
+    dirDiff: both ? (beforeUp.upShare as number) - (beforeDown.upShare as number) : null,
+    dirNoise: both ? Math.sqrt((beforeUp.upNoise as number) ** 2 + (beforeDown.upNoise as number) ** 2) : null,
+    corrDirection: spearman(xs, ys),
+    corrSize: spearman(xs.map(Math.abs), ys.map(Math.abs)),
+    corrNoise: n >= 3 ? 1.96 / Math.sqrt(n) : null,
+    buckets: BUCKETS.map((b) => ({
+      key: b.key,
+      label: b.label,
+      ...cell(ys.filter((_, i) => xs[i] >= b.lo && xs[i] < b.hi)),
+    })),
+    patterns: PATTERNS.map((pt) => ({
+      key: pt.key,
+      label: pt.label,
+      rule: pt.rule,
+      ...cell(ys.filter((_, i) => pats[i].includes(pt.key))),
+    })),
+    points,
+  };
+}

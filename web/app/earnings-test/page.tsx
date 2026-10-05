@@ -2,6 +2,7 @@ import { FlaskConicalIcon } from "lucide-react";
 import { Pct, Ticker } from "@/components/app/cells";
 import { PageHeader } from "@/components/app/page-header";
 import { TableCard } from "@/components/app/table-card";
+import { EarningsAnswer } from "@/components/app/earnings-test/answer";
 import { EarningsExplorer } from "@/components/app/earnings-test/explorer";
 import { SeasonChart } from "@/components/app/earnings-test/season-chart";
 import { Badge } from "@/components/ui/badge";
@@ -184,11 +185,12 @@ export default async function EarningsTestPage() {
   const title = "Earnings test";
   const description = (
     <>
-      Hypothesis: a stock&rsquo;s move in the 10 trading days <em>before</em> an earnings report predicts its move{" "}
-      <em>after</em>. Every return here is the stock minus SPY over the same days. The reaction is the first session
-      that can react to the report (the report day if it came before the open, the next day if after the close); the
-      drift is the 20 trading days after that. Each earnings season, reports are split into 5 equal groups by pre-move.
-      If the hypothesis holds, the group that rose most should beat the group that fell most, season after season.
+      Does what a stock does in the days <em>before</em> its earnings report tell you what it does <em>after</em>?{" "}
+      <strong className="font-medium text-foreground">Answer</strong> asks that directly: direction, size and shape
+      before, against direction and size after. <strong className="font-medium text-foreground">Advanced</strong> ranks
+      reports into groups season by season. <strong className="font-medium text-foreground">Fixed test</strong> is the
+      one rule set before looking (10 days before vs the reaction day and 20 days after).{" "}
+      <strong className="font-medium text-foreground">Live log</strong> records reports before they happen.
     </>
   );
 
@@ -231,12 +233,30 @@ export default async function EarningsTestPage() {
         }
       />
 
-      <Tabs defaultValue="explore" className="gap-6">
+      <Tabs defaultValue="answer" className="gap-6">
         <TabsList variant="line">
-          <TabsTrigger value="explore">Explorer</TabsTrigger>
+          <TabsTrigger value="answer">Answer</TabsTrigger>
+          <TabsTrigger value="explore">Advanced</TabsTrigger>
           <TabsTrigger value="fixed">Fixed test</TabsTrigger>
           <TabsTrigger value="live">Live log</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="answer">
+          {explorer && explorer.events.length > 0 ? (
+            <EarningsAnswer
+              events={explorer.events}
+              spyDates={explorer.spyDates}
+              spyRet={explorer.spyRet}
+              hasLive={explorer.events.some((e) => e.src === "live")}
+            />
+          ) : (
+            <Empty className="border py-16">
+              <EmptyDescription>
+                No return paths stored yet. Run python -m ingest.earnings_test --backfill.
+              </EmptyDescription>
+            </Empty>
+          )}
+        </TabsContent>
 
         <TabsContent value="explore">
           {explorer && explorer.events.length > 0 ? (

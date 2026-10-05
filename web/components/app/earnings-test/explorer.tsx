@@ -32,8 +32,8 @@ import {
 // Interactive what-if over the stored ±30-day return paths. Every number on
 // it is recomputed from the reports' daily returns as the controls move.
 
-const dayLabel = (d: number) => (d === 0 ? "day 0" : d > 0 ? `+${d}` : `${d}`);
-const windowLabel = ([a, b]: [number, number]) =>
+export const dayLabel = (d: number) => (d === 0 ? "day 0" : d > 0 ? `+${d}` : `${d}`);
+export const windowLabel = ([a, b]: [number, number]) =>
   a === b ? `day ${a > 0 ? "+" : ""}${a}` : `days ${dayLabel(a)} to ${dayLabel(b)}`;
 
 const PRESETS_BEFORE: { label: string; v: [number, number] }[] = [
@@ -61,7 +61,7 @@ const seasonConfig = {
 
 const pctTick = (v: number) => fmtSignedPct(v, true).replace(".0%", "%");
 
-function Control({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
+export function Control({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-2">
       <Label className="text-xs text-muted-foreground">{label}</Label>
@@ -70,7 +70,7 @@ function Control({ label, children }: { label: React.ReactNode; children: React.
   );
 }
 
-function WindowControl({
+export function WindowControl({
   label,
   value,
   onChange,
@@ -122,7 +122,7 @@ function WindowControl({
   );
 }
 
-function Toggle<T extends string>({
+export function Toggle<T extends string>({
   value,
   onChange,
   options,
@@ -198,7 +198,7 @@ export function EarningsExplorer({
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader>
-          <CardTitle>Explorer</CardTitle>
+          <CardTitle>Advanced: groups by season</CardTitle>
           <CardDescription className="max-w-3xl text-pretty">
             Pick the days whose move might predict (&ldquo;before&rdquo;) and the days you want predicted
             (&ldquo;after&rdquo;). Day 0 is the first session that can react to the report. Reports are split into
@@ -361,7 +361,7 @@ export function EarningsExplorer({
         <CardHeader>
           <CardTitle>Average path around the report</CardTitle>
           <CardDescription className="max-w-3xl text-pretty">
-            Average cumulative return{vs}{" "}from day −30 to +30, relative to the close the day before day 0 (so every line
+            Average cumulative return{vs} from day −30 to +30, relative to the close the day before day 0 (so every line
             crosses zero at day −1). Shaded: your &ldquo;before&rdquo; and &ldquo;after&rdquo; windows. The top and
             bottom groups are split on the &ldquo;before&rdquo; window, so they diverge there by construction; what
             matters is what they do afterwards.
