@@ -230,7 +230,7 @@ export default async function EarningsTestPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <CohortCard
           title="Backtest"
-          description={`Every report since ${firstBacktestSeason ?? "2016"} for the stocks on the Earnings tab, rebuilt from Yahoo history. A backtest: the stock list is today's, so companies that shrank or were delisted are missing.`}
+          description={`Every report since ${firstBacktestSeason ?? "2021Q4"} for the 30 largest stocks on the Earnings tab, rebuilt from Yahoo history. A backtest: the list is today's 30 largest, so it is made of companies that grew; ones that shrank or were delisted are missing.`}
           s={backtest}
         />
         <CohortCard
@@ -252,8 +252,9 @@ export default async function EarningsTestPage() {
           </p>
           <p>
             <strong className="font-medium text-foreground">t</strong> is that average divided by its standard
-            error across seasons. Beyond ±2 is unlikely to be chance (about 1 in 20). Seasons with fewer than 50
-            reports aren&rsquo;t scored.
+            error across seasons. Beyond ±2 is unlikely to be chance (about 1 in 20). Seasons with fewer than 25
+            reports aren&rsquo;t scored. With 30 stocks a group holds about 6 reports, so one season alone says
+            little; the count across seasons is what matters.
           </p>
           <p>
             The windows (10 days before, reaction session, 20 days after) were fixed before any result was seen.
@@ -269,7 +270,7 @@ export default async function EarningsTestPage() {
       >
         {backtest.quintiles.length === 0 ? (
           <Empty className="py-10">
-            <EmptyDescription>No season has 50 reports yet.</EmptyDescription>
+            <EmptyDescription>No season has 25 reports yet.</EmptyDescription>
           </Empty>
         ) : (
           <QuintileTable s={backtest} />

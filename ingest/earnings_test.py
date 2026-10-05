@@ -1,7 +1,8 @@
 """Earnings test — does a stock's move BEFORE an earnings report predict its move AFTER?
 
 Vijay's hypothesis, tested two ways (CLAUDE.md §2.2 note on the earnings test):
-  - backtest: every report since BACKTEST_START, rebuilt from Yahoo history;
+  - backtest: every report since BACKTEST_START for the BACKTEST_TICKERS largest stocks
+    on the Earnings tab, rebuilt from Yahoo history;
   - live log: each upcoming report is written down BEFORE it happens
     (registered from earnings_calendar), then measured once prices exist.
     A live row registered after its reaction session opened is marked 'late'
@@ -51,12 +52,13 @@ ET = ZoneInfo("America/New_York")
 BENCH = "SPY"
 PRE_DAYS = 10
 DRIFT_DAYS = 20
-BACKTEST_START = date(2016, 1, 1)
+BACKTEST_START = date(2021, 10, 1)  # 5 years before the live log starts
 LIVE_FROM = date(2026, 10, 7)       # reports on/after this date come only from the live log
 REGISTER_AHEAD_DAYS = 7             # register reports scheduled within the next week
 MATCH_WINDOW_DAYS = 20              # Yahoo's scheduled date vs the actual report date
 NO_REPORT_AFTER_DAYS = 30           # scheduled date this far past with no report → 'no_report'
-MIN_SEASON_EVENTS = 50              # fewer events than this → the season isn't scored (10 per group)
+BACKTEST_TICKERS = 30               # backtest = the 30 largest stocks on the Earnings tab
+MIN_SEASON_EVENTS = 25              # fewer events than this → the season isn't scored (5 per group)
 PACE_S = 0.3                        # between per-ticker Yahoo calls
 
 PENDING = ("scheduled", "reported", "reacted")
@@ -376,7 +378,7 @@ def apply_measure(row: dict, closes: pd.DataFrame, now: datetime) -> dict:
 
 
 def backfill(sb, limit: int | None, dry_run: bool) -> list[dict]:
-    """History since BACKTEST_START for every stock in earnings_calendar that has an earnings date."""
+    """History since BACKTEST_START for the BACKTEST_TICKERS largest stocks in earnings_calendar."""
     now = now_et()
     cal = fetch_all(sb, "earnings_calendar", "ticker,next_earnings,market_cap_usd", order=("ticker",))
     universe = sorted((c for c in cal if c.get("next_earnings")),
@@ -385,7 +387,8 @@ def backfill(sb, limit: int | None, dry_run: bool) -> list[dict]:
     if not dry_run:
         done = {r["ticker"] for r in fetch_all(sb, "earnings_test_events", "ticker,scheduled_date",
                                                source="backtest")}
-    tickers = [c["ticker"] for c in universe if c["ticker"] not in done][:limit]
+    top = [c["ticker"] for c in universe][:BACKTEST_TICKERS]
+    tickers = [t for t in top if t not in done][:limit]
     print(f"backfill: {len(tickers)} tickers ({len(done)} already done)", flush=True)
 
     events: list[dict] = []
