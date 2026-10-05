@@ -18,6 +18,11 @@ export type ExploreEvent = {
   sur: number | null; // EPS surprise %, known only AFTER the report
   src: "backtest" | "live";
   p: (number | null)[]; // 61 daily returns, units of 0.001%
+  // Known before the report (null = not available):
+  ib?: number | null; // insiders with open-market buys filed in the 90 days before
+  v?: (number | null)[] | null; // volume on days -30..-1, % of normal
+  m50?: number | null; // close at day -1 vs its 50-day average, minus 1
+  m200?: number | null;
 };
 
 export type Prepared = {
@@ -341,9 +346,109 @@ export type AnswerSettings = {
   post: [number, number];
   excess: boolean;
   cohort: "backtest" | "live" | "both";
+  only: string; // "all" or a CONTEXT key: keep only reports in that group
 };
 
-export const DEFAULT_ANSWER: AnswerSettings = { pre: [-10, -1], post: [0, 0], excess: false, cohort: "backtest" };
+export const DEFAULT_ANSWER: AnswerSettings = {
+  pre: [-10, -1],
+  post: [0, 0],
+  excess: false,
+  cohort: "backtest",
+  only: "all",
+};
+
+/** Groups by information other than the price move. `after` = known only once the report is out. */
+export const CONTEXT = [
+  {
+    key: "ins_yes",
+    group: "Insider buying",
+    label: "Insiders bought",
+    rule: "1+ insider open-market buy filed in the 90 days before the report",
+    after: false,
+  },
+  {
+    key: "ins_no",
+    group: "Insider buying",
+    label: "No insider buys",
+    rule: "none filed in the 90 days before",
+    after: false,
+  },
+  {
+    key: "vol_low",
+    group: "Volume over the before window",
+    label: "Quieter than normal",
+    rule: "under 0.8× the normal daily volume",
+    after: false,
+  },
+  {
+    key: "vol_norm",
+    group: "Volume over the before window",
+    label: "Normal",
+    rule: "0.8× to 1.25× normal",
+    after: false,
+  },
+  { key: "vol_high", group: "Volume over the before window", label: "Busy", rule: "1.25× to 2× normal", after: false },
+  {
+    key: "vol_vhigh",
+    group: "Volume over the before window",
+    label: "Very busy",
+    rule: "2× normal or more",
+    after: false,
+  },
+  {
+    key: "ma50_above",
+    group: "Trend",
+    label: "Above its 50-day average",
+    rule: "last close before the report above the 50-day average",
+    after: false,
+  },
+  { key: "ma50_below", group: "Trend", label: "Below its 50-day average", rule: "below it", after: false },
+  {
+    key: "ma200_above",
+    group: "Trend",
+    label: "Above its 200-day average",
+    rule: "last close before the report above the 200-day average",
+    after: false,
+  },
+  { key: "ma200_below", group: "Trend", label: "Below its 200-day average", rule: "below it", after: false },
+  {
+    key: "eps_miss",
+    group: "EPS vs analysts' estimate",
+    label: "Missed",
+    rule: "reported EPS below the estimate",
+    after: true,
+  },
+  { key: "eps_small", group: "EPS vs analysts' estimate", label: "Beat by 0–5%", rule: "", after: true },
+  { key: "eps_mid", group: "EPS vs analysts' estimate", label: "Beat by 5–15%", rule: "", after: true },
+  { key: "eps_big", group: "EPS vs analysts' estimate", label: "Beat by 15%+", rule: "", after: true },
+] as const;
+
+/** Average volume (% of normal) over before-window days a..b (only days -30..-1 are stored). */
+export function volumeRatio(v: (number | null)[] | null | undefined, a: number, b: number): number | null {
+  if (!v) return null;
+  let sum = 0;
+  let n = 0;
+  for (let k = Math.max(a, -PATH_DAYS); k <= Math.min(b, -1); k++) {
+    const x = v[k + PATH_DAYS];
+    if (x != null) {
+      sum += x;
+      n++;
+    }
+  }
+  return n ? sum / n / 100 : null;
+}
+
+/** Which CONTEXT groups a report belongs to, for the chosen before window. */
+export function contextKeys(e: ExploreEvent, pre: [number, number]): string[] {
+  const out: string[] = [];
+  if (e.ib != null) out.push(e.ib > 0 ? "ins_yes" : "ins_no");
+  const vr = volumeRatio(e.v, pre[0], pre[1]);
+  if (vr != null) out.push(vr < 0.8 ? "vol_low" : vr < 1.25 ? "vol_norm" : vr < 2 ? "vol_high" : "vol_vhigh");
+  if (e.m50 != null) out.push(e.m50 > 0 ? "ma50_above" : "ma50_below");
+  if (e.m200 != null) out.push(e.m200 > 0 ? "ma200_above" : "ma200_below");
+  if (e.sur != null) out.push(e.sur < 0 ? "eps_miss" : e.sur < 5 ? "eps_small" : e.sur < 15 ? "eps_mid" : "eps_big");
+  return out;
+}
 
 /** Reports in a row of a breakdown table, and what happened after. */
 export type Cell = {
@@ -356,6 +461,7 @@ export type Cell = {
 };
 
 export type BucketRow = Cell & { key: string; label: string };
+export type ContextRow = Cell & { key: string; group: string; label: string; rule: string; after: boolean };
 export type PatternRow = Cell & { key: string; label: string; rule: string };
 export type Point = { x: number; y: number; t: string; d: string };
 
@@ -371,6 +477,7 @@ export type Answer = {
   corrNoise: number | null; // ± range of a correlation from chance (95%)
   buckets: BucketRow[];
   patterns: PatternRow[];
+  context: ContextRow[];
   points: Point[];
 };
 
@@ -443,9 +550,12 @@ export function answer(prepared: Prepared[], s: AnswerSettings): Answer {
   const xs: number[] = [];
   const ys: number[] = [];
   const pats: string[][] = [];
+  const ctx: string[][] = [];
   const points: Point[] = [];
   for (const p of prepared) {
     if (s.cohort !== "both" && p.ev.src !== s.cohort) continue;
+    const keys = contextKeys(p.ev, s.pre);
+    if (s.only !== "all" && !keys.includes(s.only)) continue;
     let x = windowReturn(p.stock, a0, a1);
     let y = windowReturn(p.stock, b0, b1);
     const days: number[] = [];
@@ -461,6 +571,7 @@ export function answer(prepared: Prepared[], s: AnswerSettings): Answer {
     xs.push(x);
     ys.push(y);
     pats.push(patternsOf(days));
+    ctx.push(keys);
     points.push({ x, y, t: p.ev.t, d: p.ev.d });
   }
 
@@ -490,6 +601,14 @@ export function answer(prepared: Prepared[], s: AnswerSettings): Answer {
       label: pt.label,
       rule: pt.rule,
       ...cell(ys.filter((_, i) => pats[i].includes(pt.key))),
+    })),
+    context: CONTEXT.map((c) => ({
+      key: c.key,
+      group: c.group,
+      label: c.label,
+      rule: c.rule,
+      after: c.after,
+      ...cell(ys.filter((_, i) => ctx[i].includes(c.key))),
     })),
     points,
   };

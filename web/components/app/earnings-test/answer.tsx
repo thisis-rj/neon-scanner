@@ -9,12 +9,23 @@ import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { fmtSignedPct } from "@/lib/format";
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  CONTEXT,
   DEFAULT_ANSWER,
   PATH_DAYS,
   answer,
   prepare,
   type AnswerSettings,
   type Cell,
+  type ContextRow,
   type ExploreEvent,
 } from "@/lib/earnings-explore";
 
@@ -76,6 +87,31 @@ function CellCells({ c }: { c: Cell }) {
   );
 }
 
+const CONTEXT_GROUPS = [...new Set(CONTEXT.map((c) => c.group))];
+
+function ContextGroup({ group, rows }: { group: string; rows: ContextRow[] }) {
+  return (
+    <>
+      <TableRow className="hover:bg-transparent">
+        <TableCell colSpan={6} className="bg-muted/40 pl-6 text-xs font-medium text-muted-foreground">
+          {group}
+        </TableCell>
+      </TableRow>
+      {rows.map((c) => (
+        <TableRow key={c.key}>
+          <TableCell className="pl-6">
+            <div className="flex flex-col">
+              <span>{c.label}</span>
+              {c.rule && <span className="text-xs text-muted-foreground">{c.rule}</span>}
+            </div>
+          </TableCell>
+          <CellCells c={c} />
+        </TableRow>
+      ))}
+    </>
+  );
+}
+
 function CellHead({ first }: { first: string }) {
   return (
     <TableHeader>
@@ -118,6 +154,7 @@ export function EarningsAnswer({
   const dirReal = a.dirDiff != null && a.dirNoise != null && Math.abs(a.dirDiff) > a.dirNoise;
   const sizeReal = a.corrSize != null && a.corrNoise != null && a.corrSize > a.corrNoise;
   const quiet = a.buckets.find((b) => b.key === "flat");
+  const onlyLabel = CONTEXT.find((c) => c.key === s.only)?.label ?? "";
   const big = a.buckets.filter((b) => b.key === "fell_big" || b.key === "rose_big");
 
   return (
@@ -174,7 +211,36 @@ export function EarningsAnswer({
                 />
               </Control>
             )}
+            <Control label="Only reports where">
+              <Select value={s.only} onValueChange={(v) => set("only", v)}>
+                <SelectTrigger className="w-72">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All reports</SelectItem>
+                  {CONTEXT_GROUPS.map((g) => (
+                    <SelectGroup key={g}>
+                      <SelectLabel>{g}</SelectLabel>
+                      {CONTEXT.filter((c) => c.group === g).map((c) => (
+                        <SelectItem key={c.key} value={c.key}>
+                          {c.label}
+                          {c.after ? " (after the report)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Control>
           </div>
+          {s.only !== "all" && (
+            <p className="text-xs text-muted-foreground lg:col-span-2">
+              Showing only reports where: <strong className="text-foreground">{onlyLabel}</strong>. Every section below
+              uses just these {a.events.toLocaleString()} reports.
+              {CONTEXT.find((c) => c.key === s.only)?.after &&
+                " EPS is known only once the report is out, so this can't be used to predict the reaction day."}
+            </p>
+          )}
           {overlap && <p className="text-xs text-warning lg:col-span-2">The windows overlap.</p>}
         </CardContent>
       </Card>
@@ -310,7 +376,34 @@ export function EarningsAnswer({
 
       <Card>
         <CardHeader>
-          <CardTitle>4 · Every report, before vs after</CardTitle>
+          <CardTitle>4 · Other information before the report → after</CardTitle>
+          <CardDescription className="max-w-3xl text-pretty">
+            Same after-move ({after}
+            {vs}), split by information other than the price move. Insider buys count only once their Form 4 was filed,
+            so the public could see them. Volume is measured over {before}. EPS is known only once the report is out: it
+            can explain the reaction day but not predict it; the after-report days are the useful part. Compare each row
+            with &ldquo;All reports&rdquo;.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="border-t px-0">
+          <Table>
+            <CellHead first="Group" />
+            <TableBody>
+              {CONTEXT_GROUPS.map((g) => (
+                <ContextGroup key={g} group={g} rows={a.context.filter((c) => c.group === g)} />
+              ))}
+              <TableRow className="text-muted-foreground">
+                <TableCell className="pl-6">All reports</TableCell>
+                <CellCells c={a.all} />
+              </TableRow>
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>5 · Every report, before vs after</CardTitle>
           <CardDescription className="max-w-3xl text-pretty">
             One dot per report: across = move over {before}, up = move over {after}
             {vs}. If the before-move predicted direction, the dots would lean from bottom-left to top-right (or the

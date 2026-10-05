@@ -152,3 +152,28 @@ test("answer: 2×2 direction table, buckets, size correlation", () => {
   assert.equal(a.points.length, 40);
   close(a.beforeUp.avgSize, a.beforeUp.avg);
 });
+
+import { contextKeys, volumeRatio } from "../../web/lib/earnings-explore.ts";
+
+test("volumeRatio averages the stored before-days only", () => {
+  const v = Array(30).fill(100);
+  v[29] = 300; // day -1
+  close(volumeRatio(v, -1, -1), 3);
+  close(volumeRatio(v, -2, -1), 2);
+  close(volumeRatio(v, -5, 3), (100 * 4 + 300) / 5 / 100); // days ≥ 0 aren't stored
+  assert.equal(volumeRatio(null, -5, -1), null);
+});
+
+test("contextKeys and the 'only' filter", () => {
+  const p = Array(61).fill(0);
+  const v = Array(30).fill(250);
+  const e1 = ev(100, p, { ib: 2, v, m50: 0.05, m200: -0.1, sur: 20 });
+  const e2 = ev(100, p, { ib: 0, v: null, m50: null, m200: null, sur: -3 });
+  assert.deepEqual(contextKeys(e1, [-10, -1]), ["ins_yes", "vol_vhigh", "ma50_above", "ma200_below", "eps_big"]);
+  assert.deepEqual(contextKeys(e2, [-10, -1]), ["ins_no", "eps_miss"]);
+  const prep = prepare([e1, e2], DATES, DATES.map(() => 0));
+  assert.equal(answer(prep, { ...DEFAULT_ANSWER, only: "ins_yes" }).events, 1);
+  const a = answer(prep, DEFAULT_ANSWER);
+  assert.equal(a.context.find((c) => c.key === "eps_miss").events, 1);
+  assert.equal(a.context.find((c) => c.key === "vol_low").events, 0);
+});

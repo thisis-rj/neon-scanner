@@ -127,12 +127,18 @@ export async function fetchExplorer(): Promise<ExplorerData> {
     surprise_pct: number | null;
     source: "backtest" | "live";
     path: (number | null)[];
+    insider_buyers: number | null;
+    vol_path: (number | null)[] | null;
+    ma50_gap: number | null;
+    ma200_gap: number | null;
   };
   const [rows, spy] = await Promise.all([
     fetchPaged<Row>((a, b) =>
       sb
         .from("earnings_test_events")
-        .select("ticker,reaction_date,session,sector,surprise_pct,source,path")
+        .select(
+          "ticker,reaction_date,session,sector,surprise_pct,source,path,insider_buyers,vol_path,ma50_gap,ma200_gap",
+        )
         .in("status", ["reacted", "complete"])
         .in("source", ["backtest", "live"])
         .not("path", "is", null)
@@ -153,6 +159,10 @@ export async function fetchExplorer(): Promise<ExplorerData> {
       sur: r.surprise_pct == null ? null : Number(r.surprise_pct),
       src: r.source,
       p: r.path,
+      ib: r.insider_buyers,
+      v: r.vol_path,
+      m50: r.ma50_gap == null ? null : Number(r.ma50_gap),
+      m200: r.ma200_gap == null ? null : Number(r.ma200_gap),
     })),
     spyDates: spy.map((x) => x.date),
     spyRet: spy.map((x) => Number(x.ret)),
