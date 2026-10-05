@@ -8,7 +8,9 @@ import pytest
 
 from ingest.scoring_rules import (
     classify_change,
+    cusip_fallback_tickers,
     fund_position_changes,
+    name_ticker_map,
     reporting_quarter,
     split_factor,
     stock_signal_extras,
@@ -135,6 +137,44 @@ def test_issuer_name_fallback_when_no_cusip_match():
     rows = [h("1", "2026-03-31", None, 100, issuer="ALPHA CORP"), h("1", "2026-06-30", "AAA", 100)]
     out, _ = changes(rows)
     assert out == []
+
+
+def test_unmapped_cusip_keeps_its_ticker_when_one_quarter_spells_the_issuer_differently():
+    # Berkshire / Chubb: same CUSIP and shares every quarter, but Q1-2026 wrote
+    # "CHUBB LTD SWITZ", which matches no ticker name. Was: exit, then re-open.
+    rows = [h("1", "2025-12-31", None, 100, cusip="H1467J104", issuer="ALPHA LIMITED"),
+            h("1", "2026-03-31", None, 100, cusip="H1467J104", issuer="ALPHA LTD SWITZ"),
+            h("1", "2026-06-30", None, 100, cusip="H1467J104", issuer="ALPHA LIMITED")]
+    out, _ = changes(rows)
+    assert out == []
+
+
+def test_lowercase_cusip_matches_the_upper_case_map_entry():
+    # Akre files KKR as 48251w104; the map has 48251W104 → KKR (and a dead lower-case row).
+    rows = [h("1", "2026-03-31", None, 100, cusip="48251w104", issuer="KKR & CO L P DEL"),
+            h("1", "2026-06-30", None, 50, cusip="48251w104", issuer="KKR & CO L P DEL")]
+    out, _ = changes(rows, cusip_map={"48251W104": "AAA", "48251w104": None})
+    assert events(out) == {("1", "AAA"): "trimmed"}
+
+
+def test_shared_name_picks_mapped_then_shortest_ticker():
+    universe = [{"ticker": "KKRT", "name": "KKR & Co. Inc."}, {"ticker": "KKR", "name": "KKR & Co. Inc."},
+                {"ticker": "AAC-WT", "name": "Ares Acquisition"}, {"ticker": "AAC", "name": "Ares Acquisition"},
+                {"ticker": "ZZ", "name": "Zed Corp"}, {"ticker": "ZZZ", "name": "Zed Corp"}]
+    names = name_ticker_map(universe, preferred={"ZZZ"})
+    assert names == {"KKR": "KKR", "ARES ACQUISITION": "AAC", "ZED": "ZZZ"}
+
+
+def test_cusip_fallback_votes_by_row_count_then_ticker():
+    rows = [h("1", "2026-03-31", None, 1, cusip="X1", issuer="ALPHA CORP"),
+            h("2", "2026-03-31", None, 1, cusip="X1", issuer="ALPHA CORP"),
+            h("3", "2026-03-31", None, 1, cusip="X1", issuer="BETA INC"),
+            h("1", "2026-03-31", None, 1, cusip="X2", issuer="BETA INC"),
+            h("2", "2026-03-31", None, 1, cusip="X2", issuer="ALPHA CORP"),
+            h("1", "2026-03-31", None, 1, cusip="X3", issuer="ALPHA CORP")]
+    names = {"ALPHA": "AAA", "BETA": "BBB"}
+    fb = cusip_fallback_tickers(rows, {"X3": "ZZZ"}, names)
+    assert fb == {"X1": "AAA", "X2": "AAA"}  # X2 tie → alphabetical; mapped X3 not voted
 
 
 def test_split_between_filings_is_not_an_add():

@@ -482,10 +482,62 @@ def market_symbol(ticker):
     return ticker.replace("/", "-") if ticker else ticker
 
 
-def resolve_holding_ticker(h, cusip_map, name_to_ticker):
+def cusip_key(c):
+    """13F CUSIPs arrive in either case (Akre writes KKR as 48251w104);
+    OpenFIGI and cusip_ticker_map only know upper case."""
+    return (c or "").strip().upper()
+
+
+def upper_cusip_map(cusip_map):
+    """cusip_ticker_map keyed by cusip_key. Lower-case keys in the table never
+    resolved (OpenFIGI misses them), so an upper-case key's ticker wins."""
+    out: dict[str, str] = {}
+    for c, t in sorted(cusip_map.items()):  # digits < upper < lower: upper-case keys first
+        if t and not out.get(cusip_key(c)):
+            out[cusip_key(c)] = t
+    return out
+
+
+def name_ticker_map(universe_rows, preferred=frozenset()):
+    """Normalized issuer name → ticker. 1,775 names map to several tickers
+    (SPAC unit/warrant/share, US + OTC twins, KKR and KKRT both "KKR & Co.
+    Inc."); pick one the same way every run: a ticker some fund's CUSIP
+    already maps to, then the shortest, then alphabetical."""
+    by_name: dict[str, set[str]] = defaultdict(set)
+    for u in universe_rows:
+        if u.get("name") and u.get("ticker"):
+            by_name[nm(u["name"])].add(u["ticker"])
+    return {k: min(v, key=lambda t: (t not in preferred, len(t), t)) for k, v in by_name.items()}
+
+
+def cusip_fallback_tickers(holding_rows, cusip_map, name_to_ticker):
+    """CUSIP → one ticker for CUSIPs the CUSIP map can't resolve, voted from
+    the stored ticker or issuer-name match of every row that carries the CUSIP.
+
+    WHY: the name match alone depends on how each filing spells the issuer.
+    Berkshire's Q1-2026 13F wrote "CHUBB LTD SWITZ" (every other quarter:
+    "CHUBB LIMITED"), so Chubb dropped out of that one quarter and /funds showed
+    a $10.7B exit and an $11.7B re-open of a position that never changed. One
+    answer per CUSIP means a spelling change can't drop a stock from a quarter.
+    """
+    votes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for h in holding_rows:
+        c = cusip_key(h.get("cusip"))
+        if not c or cusip_map.get(c):
+            continue
+        t = h.get("ticker") or name_to_ticker.get(nm(h.get("issuer_name", "")))
+        if t:
+            votes[c][t] += 1
+    # Most rows wins; ties go to the alphabetically first ticker (stable across runs).
+    return {c: min(v, key=lambda t: (-v[t], t)) for c, v in votes.items()}
+
+
+def resolve_holding_ticker(h, cusip_map, name_to_ticker, cusip_fallback=None):
     """Ticker for a 13F row. Today's CUSIP map first, so both quarters of a pair
-    resolve the same way; then the stored ticker; then an issuer-name match."""
-    return market_symbol(cusip_map.get(h.get("cusip") or "") or h.get("ticker")
+    resolve the same way; then the CUSIP's fallback ticker (cusip_fallback_tickers);
+    then, for rows without a usable CUSIP, the stored ticker or an issuer-name match."""
+    c = cusip_key(h.get("cusip"))
+    return market_symbol(cusip_map.get(c) or (cusip_fallback or {}).get(c) or h.get("ticker")
                          or name_to_ticker.get(nm(h.get("issuer_name", ""))))
 
 
@@ -496,12 +548,13 @@ def fund_snapshots(holding_rows, cusip_map, name_to_ticker):
     denominator for a position's share of the fund's 13F book.
     """
     snaps: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+    fallback = cusip_fallback_tickers(holding_rows, cusip_map, name_to_ticker)
     for h in holding_rows:
         c, period = cik10(h["cik"]), h["period_of_report"]
         snap = snaps[c].setdefault(period, {"positions": {}, "total_value": 0.0})
         value = float(h.get("value_usd") or 0)
         snap["total_value"] += value
-        t = resolve_holding_ticker(h, cusip_map, name_to_ticker)
+        t = resolve_holding_ticker(h, cusip_map, name_to_ticker, fallback)
         if not t:
             continue
         p = snap["positions"].setdefault(t, {"shares": 0.0, "value": 0.0, "issuer": h.get("issuer_name")})
@@ -577,7 +630,8 @@ def fund_position_changes(as_of: date, filers_cfg, holding_rows, cusip_map, univ
            rank 0 only (the "latest 2 quarters combined" filter).
     splits: ticker → [(split_date 'YYYY-MM-DD', ratio)].
     """
-    name_to_ticker = {nm(u.get("name", "")): u["ticker"] for u in universe_rows if u.get("name")}
+    cusip_map = upper_cusip_map(cusip_map)
+    name_to_ticker = name_ticker_map(universe_rows, {market_symbol(t) for t in cusip_map.values()})
     meta = {}
     for fl in filers_cfg:
         if not fl.get("cik"):
