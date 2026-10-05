@@ -2,6 +2,17 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-10-05 — /funds: non-US stocks resolve; no more fake exit + re-open from name spellings
+
+Author: Vijay (with Claude). Branch `fix/cins-cusips`.
+
+- **Symptom:** /funds showed Berkshire exiting Chubb in Q1-2026 (−$10.7B) and re-opening it in Q2 (+$11.7B). It held 34,249,183 shares all three quarters.
+- **Root cause, three layers:** (1) `cusip_resolver` sent every CUSIP to OpenFIGI as `ID_CUSIP`; letter-first codes are CINS (non-US issuers) and only match as `ID_CINS`, so all 806 were stored as `openfigi_nomatch`, and a no-match was never retried. (2) Without a CUSIP match, /funds fell back to the issuer name per row, per quarter; Berkshire's Q1-2026 13F wrote "CHUBB LTD SWITZ" (normalizes to `CHUBB SWITZ`, no match), so Chubb dropped out of that one quarter. (3) Same blind spot elsewhere: 16,189 holding rows (7 funds) carry lower-case CUSIPs (Akre: KKR as `48251w104`) that OpenFIGI and the map never matched, and 1,775 names map to several tickers (KKR and KKRT are both "KKR & Co. Inc."), picked by row order.
+- **Fix:** `cusip_resolver` sends letter-first CUSIPs as `ID_CINS`, upper-cases CUSIPs, and re-asks no-match CUSIPs after 30 days (300 per run). /funds (`scoring_rules`) compares CUSIPs upper-case, gives an unmapped CUSIP one ticker for all quarters (`cusip_fallback_tickers`), and breaks name ties deterministically (`name_ticker_map`: a ticker some CUSIP maps to, then shortest, then alphabetical). Also fixed: the resolver's last-seen update failed every run on the `resolved_via` NOT NULL check (hidden by `continue-on-error`); `last_seen_in_holdings` had frozen at 2026-03-31.
+- **Production data, done 2026-10-05:** re-asked all 3,191 no-match CUSIPs (letter-first 0 → 414 of 806 resolved; digit-first retries found 11), then resolved 1,005 upper-cased forms (672 matched). `cusip_ticker_map`: 8,306 → 8,978 rows. `compute_fund_flows` re-run with `main`'s code: Berkshire/Chubb events gone; Accenture, ASML, Seagate etc. now appear.
+- **Measured with the branch's rules (dry run):** fake exit + same-shares re-open pairs $17.1B → $5.8B; /funds stocks 2,967 → 3,119; Akre's KKR position (was invisible) now shows its trims. These numbers reach production after merge (nightly job).
+- Logs: `logs/cusip_resolver_cins_*`, `logs/cusip_resolver_upper_*` (gitignored, in the worktree).
+
 ## 2026-10-04 — Server functions run in Singapore, next to the database
 
 Author: Vijay (with Claude). Branch `perf/sin1-region`.

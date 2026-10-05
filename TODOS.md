@@ -42,6 +42,24 @@
 **Why:** Yahoo has no industry for ETFs (e.g. SGOV), so they sit in Unclassified.
 **Depends on / blocked by:** nothing.
 
+### Holdings page matches stocks by exact issuer name
+**What:** `normIssuer` in `web/app/holdings/page.tsx` is upper-case + whitespace only, so a filing that respells an issuer ("CHUBB LIMITED" → "CHUBB LTD SWITZ") shows as an exit plus a NEW position on the Bought/Sold tabs.
+**Why:** Same fake exit + re-open /funds had before 2026-10-05; Berkshire's Chubb is the known case.
+**Context:** Holdings keeping its own name-keyed comparison was a decision (CHANGELOG 2026-10-03). Revisit with that decision in mind: key by upper-cased CUSIP, aggregate by issuer for display.
+**Depends on / blocked by:** nothing.
+
+### Upper-case CUSIPs at parse time
+**What:** `parse_13f` stores CUSIPs as filed; 16,189 rows (7 funds) are lower-case. /funds and the resolver now upper-case on read; Holdings, cost basis and Stocks still compare raw strings. Upper-case in the parser, then `update holdings_13f set cusip = upper(cusip)` and refresh `holdings_13f_effective`. The 2,169 lower-case rows left in `cusip_ticker_map` (all ticker-less) can then be deleted.
+**Depends on / blocked by:** nothing.
+
+### Positions missing from one filing, back the next
+**What:** After the 2026-10-05 ticker fixes, ~$5.8B of /funds history is still exit + same-shares re-open pairs, and 24 of the top 25 are positions absent from that quarter's filing (Lone Pine CRM Q2-2024, UNH Q1-2024, ASML Q3-2025; Viking MCD Q4-2024). Likely confidential treatment or late amendments. Check whether a later 13F-HR/A covers them; if not, decide whether a one-quarter gap with identical shares on both sides should count as held.
+**Depends on / blocked by:** nothing.
+
+### Remaining OpenFIGI no-matches
+**What:** 392 letter-first and ~2,400 digit-first CUSIPs still have no ticker after the CINS fix. Sample them (bonds, warrants, delisted, foreign-only lines?) before deciding on a second source. Unclassified on /funds went 429 → 501 because more stocks are now visible; check how many lack a Yahoo industry because they aren't in SEC's ticker list.
+**Depends on / blocked by:** nothing.
+
 ### Fix foreign-listing tickers on US stocks (CCL1EUR)
 **What:** `cusip_ticker_map` maps Carnival Corp to `CCL1EUR` (a euro listing), so it gets no price or industry. Find other `…EUR` / `…USD` / `…GBP` codes on US-listed CUSIPs and prefer the US ticker.
 **Why:** These stocks show as Unclassified on /funds and with no price elsewhere.
