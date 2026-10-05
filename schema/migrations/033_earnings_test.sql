@@ -37,12 +37,20 @@ create table if not exists earnings_test_events (
   drift_ret       numeric,
   drift_spy       numeric,
   drift_excess    numeric,
+  sector          text,                -- Yahoo sector from `tickers` when logged
+  path            jsonb,               -- daily returns at days R-30..R+30 (61 ints, units of 0.001%; null = not traded)
   measured_at     timestamptz,
   primary key (ticker, scheduled_date)
 );
 
 create index if not exists earnings_test_events_status_idx on earnings_test_events (status);
 create index if not exists earnings_test_events_source_date_idx on earnings_test_events (source, scheduled_date desc);
+
+-- SPY daily returns (fraction) for the explorer's excess-return math.
+create table if not exists earnings_test_spy (
+  date  date primary key,
+  ret   numeric not null
+);
 
 -- One row per cohort ('backtest', 'live'): the season-by-season quintile score.
 create table if not exists earnings_test_summary (
@@ -53,10 +61,11 @@ create table if not exists earnings_test_summary (
 
 alter table earnings_test_events enable row level security;
 alter table earnings_test_summary enable row level security;
+alter table earnings_test_spy enable row level security;
 do $$
 declare t text;
 begin
-  foreach t in array array['earnings_test_events', 'earnings_test_summary'] loop
+  foreach t in array array['earnings_test_events', 'earnings_test_summary', 'earnings_test_spy'] loop
     if not exists (select 1 from pg_policies where policyname = 'auth_read_' || t) then
       execute format('create policy %I on %I for select using (auth.role() = ''authenticated'')', 'auth_read_' || t, t);
     end if;

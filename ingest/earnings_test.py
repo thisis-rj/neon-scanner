@@ -17,6 +17,10 @@ test, not a tweak (testing many windows finds one that "works" by chance):
   - reaction  = close[R]   / close[R-1] - 1            (the report's session)
   - drift     = close[R+DRIFT_DAYS] / close[R] - 1     (the 20 trading days after)
   Each is also measured for SPY over the same dates; "excess" = stock − SPY.
+  path = the stock's daily returns from day R-30 to R+30 (61 values, units of
+  0.001%; day k's return = close[R+k] / close[R+k-1] - 1), and SPY's daily
+  returns go to earnings_test_spy. The /earnings-test explorer recomputes any
+  window from these; the fixed windows above stay the pre-registered test.
 
 Score (per cohort): each calendar quarter of reaction days is one earnings
 season = one experiment. Within a season, split events into 5 equal groups by
@@ -57,7 +61,8 @@ LIVE_FROM = date(2026, 10, 7)       # reports on/after this date come only from 
 REGISTER_AHEAD_DAYS = 7             # register reports scheduled within the next week
 MATCH_WINDOW_DAYS = 20              # Yahoo's scheduled date vs the actual report date
 NO_REPORT_AFTER_DAYS = 30           # scheduled date this far past with no report → 'no_report'
-BACKTEST_TICKERS = 30               # backtest = the 30 largest stocks on the Earnings tab
+BACKTEST_TICKERS = 300              # backtest = the 300 largest stocks on the Earnings tab
+PATH_DAYS = 30                      # daily returns stored from day R-30 to R+30 for the explorer
 MIN_SEASON_EVENTS = 25              # fewer events than this → the season isn't scored (5 per group)
 PACE_S = 0.3                        # between per-ticker Yahoo calls
 
@@ -88,6 +93,24 @@ def reaction_index(cal: pd.DatetimeIndex, report_date: date, session: str) -> in
     return int(pos) if pos < len(cal) else None
 
 
+def daily_path(s: pd.Series, r: int) -> list[int | None]:
+    """Daily returns at days R-PATH_DAYS..R+PATH_DAYS, ×100,000 and rounded; None where not available."""
+    out: list[int | None] = []
+    for i in range(r - PATH_DAYS, r + PATH_DAYS + 1):
+        if i < 1 or i >= len(s) or pd.isna(s.iloc[i]) or pd.isna(s.iloc[i - 1]) or s.iloc[i - 1] <= 0:
+            out.append(None)
+        else:
+            out.append(int(round((s.iloc[i] / s.iloc[i - 1] - 1) * 100_000)))
+    return out
+
+
+def spy_returns(closes: pd.DataFrame, since: date) -> list[dict]:
+    """SPY daily returns (fraction) for every trading day on/after `since`."""
+    b = closes[BENCH]
+    ret = (b / b.shift(1) - 1).dropna()
+    return [{"date": d.date(), "ret": round(float(v), 7)} for d, v in ret.items() if d.date() >= since]
+
+
 def measure(closes: pd.DataFrame, ticker: str, report_date: date, session: str) -> dict:
     """Pre-move / reaction / drift for one report. Returns {'status', 'note'?, fields...}.
 
@@ -114,6 +137,7 @@ def measure(closes: pd.DataFrame, ticker: str, report_date: date, session: str) 
         "pre_spy": b.iloc[i1] / b.iloc[i0] - 1,
         "react_ret": s.iloc[r] / s.iloc[i1] - 1,
         "react_spy": b.iloc[r] / b.iloc[i1] - 1,
+        "path": daily_path(s, r),
         "status": "reacted",
     }
     out["pre_excess"] = out["pre_ret"] - out["pre_spy"]
@@ -126,8 +150,9 @@ def measure(closes: pd.DataFrame, ticker: str, report_date: date, session: str) 
             "drift_end": cal[j].date(),
             "drift_ret": s.iloc[j] / s.iloc[r] - 1,
             "drift_spy": b.iloc[j] / b.iloc[r] - 1,
-            "status": "complete",
         })
+        if r + PATH_DAYS < len(cal):
+            out["status"] = "complete"  # every window the explorer can ask for has traded
         out["drift_excess"] = out["drift_ret"] - out["drift_spy"]
     return out
 
@@ -359,6 +384,18 @@ def _row_out(r: dict) -> dict:
     return out
 
 
+def sector_map(sb) -> dict[str, str]:
+    """Yahoo sector per ticker from `tickers` (migration 027)."""
+    return {r["ticker"]: r["sector"] for r in fetch_all(sb, "tickers", "ticker,sector", order=("ticker",))
+            if r.get("sector")}
+
+
+def upsert_spy(sb, rows: list[dict]) -> None:
+    for i in range(0, len(rows), 1000):
+        sb.table("earnings_test_spy").upsert([_row_out(r) for r in rows[i:i + 1000]],
+                                             on_conflict="date").execute()
+
+
 def upsert(sb, rows: list[dict]) -> None:
     for i in range(0, len(rows), 500):
         sb.table("earnings_test_events").upsert([_row_out(r) for r in rows[i:i + 500]],
@@ -401,10 +438,14 @@ def backfill(sb, limit: int | None, dry_run: bool) -> list[dict]:
             print(f"  [{i:>4}/{len(tickers)}] events so far {len(events)}", flush=True)
         time.sleep(PACE_S)
 
-    closes = fetch_closes(tickers, BACKTEST_START - timedelta(days=40), last_final_close(now))
+    closes = fetch_closes(tickers, BACKTEST_START - timedelta(days=60), last_final_close(now))
+    sectors = sector_map(sb)
+    for e in events:
+        e["sector"] = sectors.get(e["ticker"])
     rows = [apply_measure(e, closes, now) for e in events]
     if not dry_run:
         upsert(sb, rows)
+        upsert_spy(sb, spy_returns(closes, BACKTEST_START - timedelta(days=60)))
     return rows
 
 
@@ -414,6 +455,9 @@ def daily(sb, dry_run: bool) -> None:
     existing = fetch_all(sb, "earnings_test_events", "ticker,scheduled_date", source=["live", "late"])
     cal = fetch_all(sb, "earnings_calendar", "ticker,next_earnings", order=("ticker",))
     new = plan_registrations(cal, existing, today)
+    sectors = sector_map(sb) if new else {}
+    for r in new:
+        r["sector"] = sectors.get(r["ticker"])
     print(f"register: {len(new)} upcoming reports", flush=True)
     if new and not dry_run:
         sb.table("earnings_test_events").insert(
@@ -436,13 +480,13 @@ def daily(sb, dry_run: bool) -> None:
             updates.append(row)
     to_measure = [r for r in pending if r["status"] in ("reported", "reacted") and r.get("report_date")]
     if to_measure:
-        start = min(_d(r["report_date"]) for r in to_measure) - timedelta(days=40)
+        start = min(_d(r["report_date"]) for r in to_measure) - timedelta(days=60)
         closes = fetch_closes([r["ticker"] for r in to_measure], start, last_final_close(now))
-        for r in to_measure:
-            m = apply_measure(r, closes, now)
-            if m["status"] != r["status"] or r["status"] == "reported":
-                updates.append(m)
-    print(f"measure: {len(to_measure)} reported, {len(updates)} rows changed", flush=True)
+        # Re-measured daily until complete: the post-report part of the path grows each day.
+        updates += [apply_measure(r, closes, now) for r in to_measure]
+        if not dry_run:
+            upsert_spy(sb, spy_returns(closes, start))
+    print(f"measure: {len(to_measure)} reported, {len(updates)} rows written", flush=True)
     if updates and not dry_run:
         upsert(sb, updates)
 

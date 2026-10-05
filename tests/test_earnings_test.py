@@ -142,3 +142,31 @@ def test_score_detects_reversal_and_skips_small_seasons():
 def test_score_empty():
     s = et.score(pd.DataFrame(columns=["reaction_date", "pre_excess", "react_excess", "drift_excess"]))
     assert s["events"] == 0 and s["quintiles"] == []
+
+
+def test_daily_path_offsets_and_gaps():
+    closes = make_closes(X=lambda i: 100 * 1.01 ** i)
+    closes.loc[closes.index[45], "X"] = float("nan")
+    r = 40
+    m = et.measure(closes, "X", closes.index[r].date(), "bmo")
+    p = m["path"]
+    assert len(p) == 2 * et.PATH_DAYS + 1
+    assert p[0] == 1000                       # day R-30: +1.000% in units of 0.001%
+    assert p[et.PATH_DAYS + 5] is None        # day R+5 close missing
+    assert p[et.PATH_DAYS + 6] is None        # ...so day R+6 has no previous close either
+    early = et.measure(closes, "X", closes.index[15].date(), "bmo")["path"]
+    assert early[:15] == [None] * 15          # before the first close (and day 0 has no previous)
+
+
+def test_complete_needs_full_post_path():
+    closes = make_closes(X=lambda i: 100 + i)
+    n = len(closes)
+    m = et.measure(closes, "X", closes.index[n - 25].date(), "bmo")   # R+20 exists, R+30 doesn't
+    assert m["status"] == "reacted" and "drift_ret" in m
+
+
+def test_spy_returns():
+    closes = make_closes()
+    closes[BENCH] = [100 * 1.001 ** i for i in range(len(closes))]
+    rows = et.spy_returns(closes, closes.index[2].date())
+    assert rows[0]["date"] == closes.index[2].date() and rows[0]["ret"] == pytest.approx(0.001)
