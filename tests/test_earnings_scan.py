@@ -120,3 +120,13 @@ def test_gap_signals_window_vs_earlier():
     assert g["range_ratio"] == pytest.approx(((4 * 1 + 6 * 2) / 10) / 1.0)
     assert g["gap_last"] == pytest.approx(0.025) and g["gaps_big"] == 2
     assert sc.gap_signals(None, (-14, -5)) == {}
+
+
+def test_peer_reactions_only_before_entry_and_not_self():
+    dates = np.array(["2024-01-02", "2024-01-20", "2024-02-05", "2024-02-09", "2024-02-12"])
+    reacts = np.array([0.10, 0.02, 0.04, -0.03, 0.50])
+    ticks = np.array(["A", "B", "ME", "C", "D"])
+    # entry 2024-02-10: window 2024-01-11 … 2024-02-10 → B, ME (self: skipped), C. D (Feb 12) is after entry.
+    n, m = sc.peer_reactions(dates, reacts, ticks, "2024-02-10", "ME")
+    assert n == 2 and m == pytest.approx((0.02 - 0.03) / 2)
+    assert sc.peer_reactions(dates, reacts, ticks, "2023-12-01", "ME") == (0, pytest.approx(np.nan, nan_ok=True))

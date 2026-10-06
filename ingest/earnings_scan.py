@@ -43,6 +43,9 @@ SPLIT_DATE = "2024-04-01"   # search half before, check half from (reaction date
 FDR_Q = 0.10
 MIN_N = 60                  # reports a cut needs in EACH half to be tested
 PRE = (-10, -1)             # the before window for move / shape / volume / gap conditions
+PEER_DAYS = 30              # peers = same industry / sector reports whose reaction day fell in the 30
+                            # calendar days up to the entry close (already public when you buy)
+MIN_INDUSTRY_REPORTS = 150  # industries smaller than this aren't tested as a group on their own
 ANALYST_LOOKBACK = 21       # trading days of analyst actions counted, ending at the window's last day
 # Vijay's trade (--entry X): buy at the close X trading days before day 0, sell at the close of
 # day -1 (skip the report), day 0 (through the reaction) or day +5. Conditions then use only what
@@ -132,6 +135,17 @@ def conditions(df: pd.DataFrame) -> dict[str, tuple[str, str, np.ndarray]]:
     add("sess_amc", "time", "Reported after close", df.session == "amc")
     for sec in sorted(df.sector.dropna().unique()):
         add(f"sec_{sec}", "sector", sec, df.sector == sec)
+    if "industry" in df:
+        counts = df.industry.value_counts()
+        for ind in sorted(counts[counts >= MIN_INDUSTRY_REPORTS].index):
+            add(f"ind_{ind}", "industry", ind, df.industry == ind)
+    if "peer_react" in df:
+        two = df.peer_n >= 2
+        add("peers_up", "peers", "Industry peers jumped (avg ≥ +2%)", two & (df.peer_react >= 0.02))
+        add("peers_down", "peers", "Industry peers dropped (avg ≤ −2%)", two & (df.peer_react <= -0.02))
+        three = df.sector_n >= 3
+        add("sector_peers_up", "peers", "Sector peers rose (avg ≥ +1%)", three & (df.sector_react >= 0.01))
+        add("sector_peers_down", "peers", "Sector peers fell (avg ≤ −1%)", three & (df.sector_react <= -0.01))
     if "an_up" in df:
         add("an_up", "analysts", "Analyst upgrade (21d)", df.an_up > 0)
         add("an_down", "analysts", "Analyst downgrade (21d)", df.an_down > 0)
@@ -267,15 +281,47 @@ def features(events: list[dict], spy: list[dict], entry: int | None = None) -> p
             "vol_last": (v[pre[1] + 30] / 100) if v and v[pre[1] + 30] is not None else np.nan,
             "insider_buyers": e.get("insider_buyers"), "ma50_gap": ma50, "ma200_gap": ma200, "session": e.get("session"), "sector": e.get("sector"),
             "surprise_pct": _f(e.get("surprise_pct")), "tier": tier, **extra,
+            "industry": e.get("industry"),
+            # the entry close: day -X (or day -1 when scoring outcomes after the report)
+            "entry_date": sd[i - (entry if entry is not None else 1)] if i - (entry or 1) >= 0 else None,
         })
     df = pd.DataFrame(recs)
     if df.empty:
         return df
     df["size"] = df.react.abs()
+    df = add_peer_signals(df)
     df = df.sort_values(["ticker", "reaction_date"]).reset_index(drop=True)
     df["prev_react"] = df.groupby("ticker").react.shift(1)
     df["insider_buyers"] = pd.to_numeric(df.insider_buyers)
     return df
+
+
+def peer_reactions(dates: np.ndarray, reacts: np.ndarray, tickers: np.ndarray,
+                   entry: str, me: str) -> tuple[int, float]:
+    """(n, average reaction) of OTHER stocks in a group whose reaction day fell in the PEER_DAYS
+    calendar days up to and including `entry` (known by the entry close). `dates` sorted ISO strings."""
+    lo = (pd.Timestamp(entry) - pd.Timedelta(days=PEER_DAYS)).strftime("%Y-%m-%d")
+    a, b = np.searchsorted(dates, lo, side="left"), np.searchsorted(dates, entry, side="right")
+    vals = [reacts[k] for k in range(a, b) if tickers[k] != me and not np.isnan(reacts[k])]
+    return len(vals), (float(np.mean(vals)) if vals else np.nan)
+
+
+def add_peer_signals(df: pd.DataFrame) -> pd.DataFrame:
+    """peer_n / peer_react (same industry) and sector_n / sector_react (same sector), per report."""
+    out = {c: np.full(len(df), np.nan) for c in ("peer_n", "peer_react", "sector_n", "sector_react")}
+    for col, n_col, r_col in (("industry", "peer_n", "peer_react"), ("sector", "sector_n", "sector_react")):
+        if col not in df:
+            continue
+        for _, g in df[df[col].notna()].groupby(col):
+            g2 = g.sort_values("reaction_date")
+            dates, reacts, ticks = g2.reaction_date.to_numpy(), g2.react.to_numpy(float), g2.ticker.to_numpy()
+            for idx, row in g.iterrows():
+                if row.entry_date is None:
+                    continue
+                n, m = peer_reactions(dates, reacts, ticks, row.entry_date, row.ticker)
+                pos = df.index.get_loc(idx)
+                out[n_col][pos], out[r_col][pos] = n, m
+    return df.assign(**out)
 
 
 def analyst_signals(analyst: list | None, last: int) -> dict:
@@ -364,6 +410,9 @@ def main() -> None:
                           "insider_buyers,mcap_at_report,analyst,ohlc_path,status", source="backtest")
     events = [e for e in events if e["status"] in ("reacted", "complete")]
     spy = et.fetch_all(sb, "earnings_test_spy", "date,ret", order=("date",))
+    industry = {r["ticker"]: r["industry"] for r in et.fetch_all(sb, "tickers", "ticker,industry", order=("ticker",))}
+    for e in events:
+        e["industry"] = industry.get(e["ticker"])
     if args.entry:
         for x in [int(v) for v in args.entry.split(",")]:
             d = features(events, spy, entry=x)

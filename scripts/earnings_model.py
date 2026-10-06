@@ -44,13 +44,17 @@ def design(df: pd.DataFrame, sectors: list[str]) -> pd.DataFrame:
         "insiders": df.insider_buyers.astype(float), "prev_react": df.prev_react,
         "amc": (df.session == "amc").astype(float),
     })
-    for c in ["an_n", "an_up", "an_down", "an_init", "pt_net", "pt_avg", "range_ratio", "gap_last", "gaps_big"]:
+    for c in ["an_n", "an_up", "an_down", "an_init", "pt_net", "pt_avg", "range_ratio", "gap_last", "gaps_big",
+              "peer_n", "peer_react", "sector_n", "sector_react"]:
         if c in df:
             x[c] = df[c].astype(float)
     for t in ["small", "mid", "large", "mega"]:
         x[f"tier_{t}"] = (df.tier == t).astype(float)
     for s in sectors:
         x[f"sec_{s}"] = (df.sector == s).astype(float)
+    big = df.industry.value_counts()
+    for ind in sorted(big[big >= sc.MIN_INDUSTRY_REPORTS].index):
+        x[f"ind_{ind}"] = (df.industry == ind).astype(float)
     for p in SHAPES:
         x[f"shape_{p}"] = df.patterns.apply(lambda ps, p=p: p in ps).astype(float)
     return x
@@ -89,6 +93,9 @@ def main() -> None:
                                       "ma200_gap,insider_buyers,mcap_at_report,analyst,ohlc_path,status", source="backtest")
               if e["status"] in ("reacted", "complete")]
     spy = et.fetch_all(sb, "earnings_test_spy", "date,ret", order=("date",))
+    industry = {r["ticker"]: r["industry"] for r in et.fetch_all(sb, "tickers", "ticker,industry", order=("ticker",))}
+    for e in events:
+        e["industry"] = industry.get(e["ticker"])
     rng = np.random.default_rng(SEED)
     print(f"reports {len(events)}; train on reactions before {sc.SPLIT_DATE}, score after; "
           f"|t| > 2.8 needed (9 models)\n")
