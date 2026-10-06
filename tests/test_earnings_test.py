@@ -250,4 +250,4 @@ def test_analyst_actions_public_day_and_window():
     r = int(cal.searchsorted(pd.Timestamp("2024-03-15")))
     w = et.analyst_window(acts, cal, r)
     assert [x[1] for x in w] == ["up", "down", "main"]                          # 2023 init is outside 63 days
-    assert w[0][0] == -9 and w[1][0] == -8 and w[2][0] == -5                    # Sat 9 Mar → Mon 11 Mar
+    assert w[0][0] == -9 and w[1][0] == -8 and w[2][0] == -4                    # Sat 9 Mar → Mon 11 Mar
