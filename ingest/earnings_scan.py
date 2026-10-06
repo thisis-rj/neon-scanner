@@ -304,7 +304,11 @@ def gap_signals(ohlc: list | None, pre: tuple[int, int]) -> dict:
     win = [get(k, 1) for k in range(a, b + 1)]
     base = [get(k, 1) for k in range(-30, a)]
     gaps = [get(k, 0) for k in range(a, b + 1)]
-    wr, br = np.nanmean(win) if win else np.nan, np.nanmean(base) if len(base) >= 5 else np.nan
+    def avg(xs: list[float], need: int) -> float:
+        xs = [x for x in xs if not np.isnan(x)]
+        return float(np.mean(xs)) if len(xs) >= need else np.nan
+
+    wr, br = avg(win, 1), avg(base, 5)
     return {
         "range_ratio": wr / br if br and not np.isnan(br) and br > 0 else np.nan,
         "gap_last": get(b, 0),
