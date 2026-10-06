@@ -75,3 +75,18 @@ def test_shape_patterns_match_page_rules():
     assert sc.shape_patterns([0.01, 0.01, 0.01, -0.001]) == ["up_days"]
     assert "drop_last" in sc.shape_patterns([0, 0, -0.04])
     assert sc.shape_patterns([0.01, float("nan")]) == []
+
+
+def test_entry_mode_uses_only_information_known_at_entry():
+    # 61-day path: +1% on day -2 only (after a day -5 entry). SPY flat.
+    path = [0] * 61
+    path[30 - 2] = 1000
+    spy = [{"date": d.strftime("%Y-%m-%d"), "ret": 0.0} for d in pd.bdate_range("2024-01-01", "2024-06-28")]
+    ev = {"ticker": "X", "reaction_date": spy[60]["date"], "path": path, "vol_path": None, "session": "amc",
+          "sector": "Tech", "surprise_pct": 1.0, "insider_buyers": 0, "ma50_gap": 0.2, "ma200_gap": 0.3,
+          "mcap_at_report": 5e9}
+    d = sc.features([ev], spy, entry=5)
+    r = d.iloc[0]
+    assert r.skip == pytest.approx(0.01) and r.through == pytest.approx(0.01)   # held days -4..-1 / -4..0
+    assert r.pre == pytest.approx(0.0)                                          # days -14..-5: before the jump
+    assert pd.isna(r.ma50_gap) and pd.isna(r.ma200_gap)                         # measured after entry: dropped

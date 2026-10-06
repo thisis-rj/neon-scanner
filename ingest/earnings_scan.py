@@ -43,6 +43,14 @@ SPLIT_DATE = "2024-04-01"   # search half before, check half from (reaction date
 FDR_Q = 0.10
 MIN_N = 60                  # reports a cut needs in EACH half to be tested
 PRE = (-10, -1)             # the before window for move / shape / volume conditions
+# Vijay's trade (--entry X): buy at the close X trading days before day 0, sell at the close of
+# day -1 (skip the report), day 0 (through the reaction) or day +5. Conditions then use only what
+# is known at the entry close (see features()).
+TRADE_OUTCOMES = {
+    "skip": "Sell day before the report",
+    "through": "Sell after the reaction day",
+    "after5": "Sell 5 days after",
+}
 OUTCOMES = {
     "react": "Reaction day",
     "week": "First week (day 0–4)",
@@ -141,8 +149,9 @@ def cuts(conds: dict[str, tuple[str, str, np.ndarray]]):
             yield (a, b)
 
 
-def scan(df: pd.DataFrame) -> list[dict]:
+def scan(df: pd.DataFrame, outcomes: dict[str, str] | None = None) -> list[dict]:
     """Two-step scan over all cuts × outcomes. df: one row per report from features()."""
+    OUTCOMES = outcomes or globals()["OUTCOMES"]
     conds = conditions(df)
     week = df.week_id.to_numpy()
     search = (df.reaction_date < SPLIT_DATE).to_numpy()
@@ -191,8 +200,17 @@ def scan(df: pd.DataFrame) -> list[dict]:
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 
-def features(events: list[dict], spy: list[dict]) -> pd.DataFrame:
-    """One row per measured report: outcomes (minus SPY) and every condition's inputs."""
+def features(events: list[dict], spy: list[dict], entry: int | None = None) -> pd.DataFrame:
+    """One row per measured report: outcomes (minus SPY) and every condition's inputs.
+
+    entry=X: Vijay's trade. Conditions use only information known at the close of day -X: the move,
+    shape and volume over the 10 days ending at -X, and volume on day -X. The stored 50/200-day gaps
+    are measured at day -1, after the entry, and backing them out leaked later prices into the signal
+    (it produced a fake "below 50-day average" effect that vanished with an exact 20-day average), so
+    in this mode they are left out.
+    Insider buys still count filings up to the report date (up to X-1 days after entry; approximate).
+    Outcomes: hold returns minus SPY from the entry close to the exit close (TRADE_OUTCOMES)."""
+    pre = PRE if entry is None else (-entry - 9, -entry)
     sd = [str(s["date"]) for s in spy]
     sr = np.array([float(s["ret"]) for s in spy])
     at = {d: i for i, d in enumerate(sd)}
@@ -205,24 +223,28 @@ def features(events: list[dict], spy: list[dict]) -> pd.DataFrame:
         spyp = np.array([sr[i + k - 30] if 0 <= i + k - 30 < len(sr) else np.nan for k in range(61)])
         win = lambda arr, a, b: float(np.prod(1 + arr[a + 30:b + 31]) - 1)  # noqa: E731
         ex = lambda a, b: win(stock, a, b) - win(spyp, a, b)  # noqa: E731
-        days = list(stock[PRE[0] + 30:PRE[1] + 31] - spyp[PRE[0] + 30:PRE[1] + 31])
+        days = list(stock[pre[0] + 30:pre[1] + 31] - spyp[pre[0] + 30:pre[1] + 31])
         v = e.get("vol_path") or None
-        vv = [x for x in (v[PRE[0] + 30:PRE[1] + 31] if v else []) if x is not None]
+        vv = [x for x in (v[pre[0] + 30:pre[1] + 31] if v else []) if x is not None]
         cap = e.get("mcap_at_report")
         tier = None
         if cap:
             cap = float(cap)
             tier = next((t for t, (lo, hi) in et.TIERS.items() if lo <= cap < hi), "micro" if cap < 3e8 else None)
         react = ex(0, 0)
+        ma50, ma200 = _f(e.get("ma50_gap")), _f(e.get("ma200_gap"))
+        trade = {}
+        if entry is not None:
+            ma50 = ma200 = None  # measured at day -1, after the entry: not known when buying
+            trade = {"skip": ex(-entry + 1, -1), "through": ex(-entry + 1, 0), "after5": ex(-entry + 1, 5)}
         recs.append({
             "ticker": e["ticker"], "reaction_date": str(e["reaction_date"]),
             "week_id": pd.Timestamp(str(e["reaction_date"])).to_period("W").ordinal,  # calendar week
-            "pre": ex(*PRE), "react": react, "week": ex(0, 4), "drift": ex(1, 20),  # 'week' = first-week outcome
+            "pre": ex(*pre), "react": react, **trade, "week": ex(0, 4), "drift": ex(1, 20),  # 'week' = first-week outcome
             "patterns": shape_patterns(days),
             "vol": float(np.mean(vv)) / 100 if vv else np.nan,
-            "vol_last": (v[29] / 100) if v and v[29] is not None else np.nan,
-            "insider_buyers": e.get("insider_buyers"), "ma50_gap": _f(e.get("ma50_gap")),
-            "ma200_gap": _f(e.get("ma200_gap")), "session": e.get("session"), "sector": e.get("sector"),
+            "vol_last": (v[pre[1] + 30] / 100) if v and v[pre[1] + 30] is not None else np.nan,
+            "insider_buyers": e.get("insider_buyers"), "ma50_gap": ma50, "ma200_gap": ma200, "session": e.get("session"), "sector": e.get("sector"),
             "surprise_pct": _f(e.get("surprise_pct")), "tier": tier,
         })
     df = pd.DataFrame(recs)
@@ -271,6 +293,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--csv")
+    ap.add_argument("--entry", help="Vijay's trade: comma-separated entry days, e.g. 10,5,3 (prints only)")
     args = ap.parse_args()
 
     from supabase import create_client
@@ -281,6 +304,25 @@ def main() -> None:
                           "insider_buyers,mcap_at_report,status", source="backtest")
     events = [e for e in events if e["status"] in ("reacted", "complete")]
     spy = et.fetch_all(sb, "earnings_test_spy", "date,ret", order=("date",))
+    if args.entry:
+        for x in [int(v) for v in args.entry.split(",")]:
+            d = features(events, spy, entry=x)
+            res = scan(d, TRADE_OUTCOMES)
+            head, kept = res[0], res[1:]
+            held = [r for r in kept if r["verdict"] != "did not hold"]
+            print(f"\n== buy {x} days before: {head['tested']} tests, {head['kept']} kept by search half, "
+                  f"{sum(r['verdict'] == 'confirmed' for r in kept)} confirmed, "
+                  f"{sum(r['verdict'] == 'same direction' for r in kept)} weak")
+            for o in TRADE_OUTCOMES:
+                v = d[o].dropna()
+                print(f"   all reports, {TRADE_OUTCOMES[o]:<28} avg {v.mean():+.2%}  beat SPY {np.mean(v > 0):.0%}")
+            for r in held:
+                print(f"   [{r['verdict']:<14}] {TRADE_OUTCOMES[r['outcome']]:<28} {r['label']:<58} "
+                      f"search {r['search_effect']:+.2%} (t {r['search_t']:+.1f}, n {r['search_n']}) | "
+                      f"check {r['check_effect']:+.2%} (t {r['check_t']:+.1f}, n {r['check_n']})")
+            if args.csv:
+                pd.DataFrame(kept).to_csv(args.csv.replace(".csv", f"_entry{x}.csv"), index=False)
+        return
     df = features(events, spy)
     print(f"reports {len(df)}; by size tier: {df.tier.value_counts(dropna=False).to_dict()}")
     res = scan(df)
