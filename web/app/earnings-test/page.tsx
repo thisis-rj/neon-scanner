@@ -218,7 +218,6 @@ export default async function EarningsTestPage() {
   }
 
   const { backtest, live, log, computedAt, firstBacktestSeason } = data;
-  const pending = log.filter((r) => ["scheduled", "reported", "reacted"].includes(r.status)).length;
 
   return (
     <div className="flex flex-col gap-8">
@@ -230,7 +229,7 @@ export default async function EarningsTestPage() {
             {computedAt && <span>Scored {computedAt.slice(0, 10)}</span>}
             <span>{backtest.events.toLocaleString()} backtest reports</span>
             <span>{log.length.toLocaleString()} logged live</span>
-            {pending > 0 && <span>{pending} awaiting prices</span>}
+            <Badge variant="muted">Concluded 2026-10-07 · data no longer updated</Badge>
           </>
         }
       />
@@ -265,7 +264,7 @@ export default async function EarningsTestPage() {
             />
             <CohortCard
               title="Live log"
-              description="Each upcoming report is written down before it happens, then measured once prices exist. This is the clean test; it grows by roughly one season per quarter."
+              description="Each upcoming report was written down before it happened, then measured once prices existed. Stopped when the test concluded on 2026-10-07, so later reports are not logged."
               s={live}
             />
           </div>
@@ -350,7 +349,7 @@ export default async function EarningsTestPage() {
         <TabsContent value="live">
           <TableCard
             title="Live log"
-            description="Newest first. Reports are logged up to 7 days ahead from the Earnings tab's calendar. A report logged after its reaction session opened is marked 'logged late' and left out of the score."
+            description="Newest first. Reports were logged up to 7 days ahead from the Earnings tab's calendar; a report logged after its reaction session opened is marked 'logged late' and left out of the score. The log stopped on 2026-10-07 when the test concluded: rows still 'awaiting' were never measured."
           >
             {log.length === 0 ? (
               <Empty className="py-10">

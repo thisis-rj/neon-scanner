@@ -2,6 +2,15 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-10-07 — /earnings-test concluded; data frozen
+
+Author: Vijay (with Claude). Branch `feat/earnings-test`.
+
+- **Conclusion:** no public pre-report signal reliably picks which stocks rise around earnings. Tested on 14,443 reports (2021-10 → 2026-09; small / mid / large / mega caps) for the trade "buy 10 / 5 / 3 trading days before day 0, sell at day −1 / after the reaction day / day +5", using only information known at the entry close: move and shape before, volume, overnight gaps and daily range, 50/200-day trend, company size, sector, 128 industries, peer reactions (industry / sector), insider buys (Form 4 filed), analyst upgrades / downgrades and price-target changes, report timing, previous reaction. Two-step tests (search on reactions before 2024-04-01 with Benjamini–Hochberg q < 0.10, check once after): single signals, pairs and 3-signal combinations (`earnings_scan --entry 10,5,3 --depth 3`: 30,982 tests in the last round) → **0 held**. A gradient-boosted model over all signals (`scripts/earnings_model.py`, research only, needs scikit-learn) → best t 2.6 vs a 2.8 bar; its shuffled-outcome placebo reached 2.5.
+- **What did hold:** holding through the report beats SPY by ≈ +0.4% on average (≈ +0.7% to day +5), the same across stocks — a basket effect, before trading costs; and the SIZE of the reaction is predictable (tech, small caps, after-close reports, day-before volume spikes, big prior moves → bigger), which options already price. Faint, unproven lean: analysts cutting price targets before the report → worse hold-through trades (t ≤ 1.7).
+- **Pitfalls found:** a "below 50-day average" effect came from look-ahead (the gap was measured at day −1, after the entry) — `--entry` mode drops it; the check half was reused across several rounds, so it is no longer a pristine holdout.
+- **Stopped:** the nightly `ingest.earnings_test` step is removed from `daily-ingest.yml`; the live log froze with the rows logged so far. The Scan tab shows the last saved after-report scan (pairs); the trade-mode results above were run from the command line.
+
 ## 2026-10-06 — /earnings-test: does the move before earnings predict the move after?
 
 Author: Vijay (with Claude). Branch `feat/earnings-test`.

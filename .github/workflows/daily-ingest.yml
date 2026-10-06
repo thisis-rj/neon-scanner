@@ -78,13 +78,6 @@ jobs:
         run: python -m ingest.mag7
         continue-on-error: true
 
-      - name: Earnings test — log upcoming reports, measure past ones, re-score
-        # /earnings-test (CLAUDE.md §2.2 note). Reads earnings_calendar (the step
-        # above), so it runs after it. Yahoo calls only for logged reports whose
-        # date has passed (~0-300/day in season). Needs migration 033.
-        run: python -m ingest.earnings_test
-        continue-on-error: true
-
       - name: Refresh My Stocks prices + USD/INR (personal portfolio)
         # Updates portfolio_positions.current_price and fx_rates (USDINR) for the
         # /my-stocks live P&L + ₹ pocket-return band. DB-driven (--prices reads
