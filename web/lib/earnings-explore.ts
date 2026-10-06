@@ -23,6 +23,7 @@ export type ExploreEvent = {
   v?: (number | null)[] | null; // volume on days -30..-1, % of normal
   m50?: number | null; // close at day -1 vs its 50-day average, minus 1
   m200?: number | null;
+  mc?: number | null; // approximate market cap at the report (USD)
 };
 
 export type Prepared = {
@@ -359,6 +360,16 @@ export const DEFAULT_ANSWER: AnswerSettings = {
 
 /** Groups by information other than the price move. `after` = known only once the report is out. */
 export const CONTEXT = [
+  { key: "cap_small", group: "Company size (at the report)", label: "Small cap", rule: "$300M–2B", after: false },
+  { key: "cap_mid", group: "Company size (at the report)", label: "Mid cap", rule: "$2–10B", after: false },
+  { key: "cap_large", group: "Company size (at the report)", label: "Large cap", rule: "$10–200B", after: false },
+  {
+    key: "cap_mega",
+    group: "Company size (at the report)",
+    label: "Mega cap (blue chip)",
+    rule: "$200B+",
+    after: false,
+  },
   {
     key: "ins_yes",
     group: "Insider buying",
@@ -441,6 +452,8 @@ export function volumeRatio(v: (number | null)[] | null | undefined, a: number, 
 /** Which CONTEXT groups a report belongs to, for the chosen before window. */
 export function contextKeys(e: ExploreEvent, pre: [number, number]): string[] {
   const out: string[] = [];
+  if (e.mc != null && e.mc >= 3e8)
+    out.push(e.mc < 2e9 ? "cap_small" : e.mc < 1e10 ? "cap_mid" : e.mc < 2e11 ? "cap_large" : "cap_mega");
   if (e.ib != null) out.push(e.ib > 0 ? "ins_yes" : "ins_no");
   const vr = volumeRatio(e.v, pre[0], pre[1]);
   if (vr != null) out.push(vr < 0.8 ? "vol_low" : vr < 1.25 ? "vol_norm" : vr < 2 ? "vol_high" : "vol_vhigh");

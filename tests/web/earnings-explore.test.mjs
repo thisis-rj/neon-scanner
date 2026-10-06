@@ -177,3 +177,13 @@ test("contextKeys and the 'only' filter", () => {
   assert.equal(a.context.find((c) => c.key === "eps_miss").events, 1);
   assert.equal(a.context.find((c) => c.key === "vol_low").events, 0);
 });
+
+test("company size groups from market cap at the report", () => {
+  const p = Array(61).fill(0);
+  const k = (mc) => contextKeys(ev(100, p, { mc, sur: null }), [-10, -1]);
+  assert.deepEqual(k(1e9), ["cap_small"]);
+  assert.deepEqual(k(5e9), ["cap_mid"]);
+  assert.deepEqual(k(5e10), ["cap_large"]);
+  assert.deepEqual(k(3e12), ["cap_mega"]);
+  assert.deepEqual(k(1e8), []); // micro caps aren't a group
+});

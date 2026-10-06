@@ -53,7 +53,35 @@ export type LiveEvent = {
   drift_excess: number | null;
 };
 
+export type ScanRow = {
+  cut: string[];
+  label: string;
+  outcome: "react" | "week" | "drift" | "size";
+  search_effect: number;
+  search_t: number;
+  search_n: number;
+  search_q: number;
+  check_effect: number;
+  check_t: number;
+  check_n: number;
+  verdict: "confirmed" | "same direction" | "did not hold";
+  up_share: number | null;
+  base_up: number | null;
+};
+
+export type ScanResult = {
+  tested: number;
+  kept: ScanRow[];
+  split: string;
+  fdr_q: number;
+  min_n: number;
+  reports: number;
+  tiers: Record<string, number>;
+  computed: string;
+};
+
 export type EarningsTestData = {
+  scan: ScanResult | null;
   backtest: CohortScore | null;
   live: CohortScore | null;
   computedAt: string | null;
@@ -84,6 +112,7 @@ export async function fetchEarningsTest(): Promise<EarningsTestData | null> {
   const by = new Map((sum.data ?? []).map((r) => [r.cohort as string, r]));
   const backtest = (by.get("backtest")?.data as CohortScore | undefined) ?? null;
   return {
+    scan: (by.get("scan")?.data as ScanResult | undefined) ?? null,
     backtest,
     live: (by.get("live")?.data as CohortScore | undefined) ?? null,
     computedAt: (by.get("backtest")?.computed_at as string | undefined) ?? null,
@@ -131,13 +160,14 @@ export async function fetchExplorer(): Promise<ExplorerData> {
     vol_path: (number | null)[] | null;
     ma50_gap: number | null;
     ma200_gap: number | null;
+    mcap_at_report: number | null;
   };
   const [rows, spy] = await Promise.all([
     fetchPaged<Row>((a, b) =>
       sb
         .from("earnings_test_events")
         .select(
-          "ticker,reaction_date,session,sector,surprise_pct,source,path,insider_buyers,vol_path,ma50_gap,ma200_gap",
+          "ticker,reaction_date,session,sector,surprise_pct,source,path,insider_buyers,vol_path,ma50_gap,ma200_gap,mcap_at_report",
         )
         .in("status", ["reacted", "complete"])
         .in("source", ["backtest", "live"])
@@ -163,6 +193,7 @@ export async function fetchExplorer(): Promise<ExplorerData> {
       v: r.vol_path,
       m50: r.ma50_gap == null ? null : Number(r.ma50_gap),
       m200: r.ma200_gap == null ? null : Number(r.ma200_gap),
+      mc: r.mcap_at_report == null ? null : Number(r.mcap_at_report),
     })),
     spyDates: spy.map((x) => x.date),
     spyRet: spy.map((x) => Number(x.ret)),

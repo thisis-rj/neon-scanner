@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { TableCard } from "@/components/app/table-card";
 import { EarningsAnswer } from "@/components/app/earnings-test/answer";
 import { EarningsExplorer } from "@/components/app/earnings-test/explorer";
+import { EarningsScan } from "@/components/app/earnings-test/scan";
 import { SeasonChart } from "@/components/app/earnings-test/season-chart";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -187,7 +188,9 @@ export default async function EarningsTestPage() {
     <>
       Does what a stock does in the days <em>before</em> its earnings report tell you what it does <em>after</em>?{" "}
       <strong className="font-medium text-foreground">Answer</strong> asks that directly: direction, size and shape
-      before, against direction and size after. <strong className="font-medium text-foreground">Advanced</strong> ranks
+      before, against direction and size after. <strong className="font-medium text-foreground">Scan</strong> tests
+      every cut (company size, volume, insiders, trend, sector, and pairs of them) on the first half of the history and
+      keeps only what holds in the second. <strong className="font-medium text-foreground">Advanced</strong> ranks
       reports into groups season by season. <strong className="font-medium text-foreground">Fixed test</strong> is the
       one rule set before looking (10 days before vs the reaction day and 20 days after).{" "}
       <strong className="font-medium text-foreground">Live log</strong> records reports before they happen.
@@ -236,6 +239,7 @@ export default async function EarningsTestPage() {
       <Tabs defaultValue="answer" className="gap-6">
         <TabsList variant="line">
           <TabsTrigger value="answer">Answer</TabsTrigger>
+          <TabsTrigger value="scan">Scan</TabsTrigger>
           <TabsTrigger value="explore">Advanced</TabsTrigger>
           <TabsTrigger value="fixed">Fixed test</TabsTrigger>
           <TabsTrigger value="live">Live log</TabsTrigger>
@@ -256,6 +260,10 @@ export default async function EarningsTestPage() {
               </EmptyDescription>
             </Empty>
           )}
+        </TabsContent>
+
+        <TabsContent value="scan">
+          <EarningsScan scan={data.scan} />
         </TabsContent>
 
         <TabsContent value="explore">
