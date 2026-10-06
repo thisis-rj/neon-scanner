@@ -223,3 +223,31 @@ def test_context_mcap_at_report():
     r = 100
     out = et.context(closes, None, "X", closes.index[r].date(), "bmo", None, cap_today=1e10)
     assert out["mcap_at_report"] == pytest.approx(1e10 * closes["X"].iloc[r - 1] / closes["X"].iloc[-1])
+
+
+def test_ohlc_path_gap_and_range():
+    idx = pd.bdate_range("2024-01-01", periods=60)
+    c = pd.Series(100.0, index=idx)
+    o = pd.Series(100.0, index=idx); h = pd.Series(101.0, index=idx); lo = pd.Series(99.0, index=idx)
+    r = 50
+    o.iloc[r - 1] = 102.0                          # day -1 opens 2% above day -2's close
+    p = et.ohlc_path(o, h, lo, c, r)
+    assert len(p) == et.PATH_DAYS and p[-1] == [2000, 2000] and p[0] == [0, 2000]
+    assert et.ohlc_path(o, h, lo, c, 20) is None
+
+
+def test_analyst_actions_public_day_and_window():
+    df = pd.DataFrame({"Action": ["up", "down", "reit", "weird", "init"],
+                       "currentPriceTarget": [120.0, 80.0, 100.0, 1.0, 50.0],
+                       "priorPriceTarget": [100.0, 100.0, 100.0, 1.0, 0.0]},
+                      index=pd.DatetimeIndex(["2024-03-04 10:00", "2024-03-04 17:30", "2024-03-09 09:00",
+                                              "2024-03-05 10:00", "2023-06-01 10:00"], name="GradeDate"))
+    acts = et.actions_from_yahoo(df)
+    assert [a["code"] for a in acts] == ["up", "down", "main", "init"]          # unknown action dropped
+    assert acts[1]["public"] == date(2024, 3, 5)                                # after the close → next day
+    assert acts[0]["pt"] == pytest.approx(0.2) and acts[3]["pt"] is None
+    cal = pd.bdate_range("2024-01-01", "2024-06-28")
+    r = int(cal.searchsorted(pd.Timestamp("2024-03-15")))
+    w = et.analyst_window(acts, cal, r)
+    assert [x[1] for x in w] == ["up", "down", "main"]                          # 2023 init is outside 63 days
+    assert w[0][0] == -9 and w[1][0] == -8 and w[2][0] == -5                    # Sat 9 Mar → Mon 11 Mar

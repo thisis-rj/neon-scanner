@@ -29,6 +29,10 @@ test, not a tweak (testing many windows finds one that "works" by chance):
     insider_buyers / insider_buy_usd = distinct insiders with open-market
                  buys (Form 4, code P) FILED in the 90 days before the report
                  date — filed, so the public could have seen them.
+    analyst    = Yahoo upgrades/downgrades in the ANALYST_DAYS trading days
+                 before day 0: [k, code, price-target change], k = the
+                 trading day it was public by the close (after 16:00 → next day);
+    ohlc_path  = [overnight gap, high-low range] for days R-30..R-1.
 
 Score (per cohort): each calendar quarter of reaction days is one earnings
 season = one experiment. Within a season, split events into 5 equal groups by
@@ -72,6 +76,7 @@ NO_REPORT_AFTER_DAYS = 30           # scheduled date this far past with no repor
 BACKTEST_TICKERS = 300              # backtest = the 300 largest stocks on the Earnings tab
 PATH_DAYS = 30                      # daily returns stored from day R-30 to R+30 for the explorer
 VOL_BASE_DAYS = 60                  # "normal" volume = average of the 60 trading days before day R-30
+ANALYST_DAYS = 63                   # trading days (~3 months) of analyst actions kept before day 0
 INSIDER_DAYS = 90                   # insider buys FILED in the 90 calendar days before the report
 SAMPLE_SEED = 20261007              # fixed: the random size-tier samples are reproducible
 TIERS = {                           # by market cap in `tickers` today (USD)
@@ -159,9 +164,59 @@ def insider_counts(buys: list[dict], report_date: date) -> tuple[int, float]:
     return len(who), usd
 
 
+def ohlc_path(o: pd.Series, h: pd.Series, lo: pd.Series, c: pd.Series, r: int) -> list[list[int | None]] | None:
+    """[gap, range] for days R-30..R-1, ×100,000: gap = open / previous close - 1, range = (high - low) / close."""
+    if r - PATH_DAYS < 1:
+        return None
+    out = []
+    for i in range(r - PATH_DAYS, r):
+        pc, oo, hh, ll, cc = c.iloc[i - 1], o.iloc[i], h.iloc[i], lo.iloc[i], c.iloc[i]
+        gap = None if pd.isna(pc) or pd.isna(oo) or pc <= 0 else int(round((oo / pc - 1) * 100_000))
+        rng = None if pd.isna(hh) or pd.isna(ll) or pd.isna(cc) or cc <= 0 else int(round((hh - ll) / cc * 100_000))
+        out.append([gap, rng])
+    return out
+
+
+ACTION_CODES = {"up": "up", "down": "down", "init": "init", "main": "main", "reit": "main"}
+
+
+def actions_from_yahoo(df: pd.DataFrame | None) -> list[dict]:
+    """Yahoo upgrades_downgrades → [{public: date it was known by the close, code, pt}]."""
+    if df is None or len(df) == 0:
+        return []
+    out = []
+    for ts, row in df.iterrows():
+        ts = pd.Timestamp(ts)
+        code = ACTION_CODES.get(str(row.get("Action", "")).lower())
+        if code is None:
+            continue
+        cur, prior = _num(row.get("currentPriceTarget")), _num(row.get("priorPriceTarget"))
+        pt = (cur / prior - 1) if cur and prior and prior > 0 else None
+        # Yahoo's GradeDate has no zone; treat it as New York time. After the close → known next day.
+        day = ts.date() + timedelta(days=1) if (ts.hour, ts.minute) >= (16, 0) else ts.date()
+        out.append({"public": day, "code": code, "pt": pt})
+    return out
+
+
+def analyst_window(acts: list[dict], cal: pd.DatetimeIndex, r: int) -> list[list]:
+    """[k, code, pt] for actions public on trading days R-ANALYST_DAYS..R-1 (k < 0)."""
+    out = []
+    lo = r - ANALYST_DAYS
+    for a in acts:
+        d = pd.Timestamp(a["public"])
+        if len(cal) == 0 or d < cal[0]:
+            continue  # before the price calendar: can't place it (and it's far older than the window)
+        i = int(cal.searchsorted(d, side="left"))  # weekend → next trading day
+        if lo <= i < r:
+            out.append([i - r, a["code"], None if a["pt"] is None else round(float(a["pt"]), 4)])
+    return sorted(out, key=lambda x: x[0])
+
+
 def context(closes: pd.DataFrame, volumes: pd.DataFrame | None, ticker: str, report_date: date,
-            session: str, buys: list[dict] | None, cap_today: float | None = None) -> dict:
-    """Pre-report context for cohorts (vol_path, ma gaps, insider buys, size). Only keys it could compute."""
+            session: str, buys: list[dict] | None, cap_today: float | None = None,
+            ohl: dict[str, pd.DataFrame] | None = None, acts: list[dict] | None = None) -> dict:
+    """Pre-report context for cohorts (vol_path, ma gaps, insider buys, size, analyst actions, gaps/ranges).
+    Only keys it could compute."""
     out: dict = {}
     if buys is not None:
         out["insider_buyers"], out["insider_buy_usd"] = insider_counts(buys, report_date)
@@ -179,6 +234,11 @@ def context(closes: pd.DataFrame, volumes: pd.DataFrame | None, ticker: str, rep
     out["ma200_gap"] = ma_gap(closes[ticker], r, 200)
     if volumes is not None and ticker in volumes:
         out["vol_path"] = volume_path(volumes[ticker].reindex(closes.index), r)
+    if ohl is not None and all(ticker in ohl[k] for k in ("Open", "High", "Low")):
+        o, h, lo = (ohl[k][ticker].reindex(closes.index) for k in ("Open", "High", "Low"))
+        out["ohlc_path"] = ohlc_path(o, h, lo, closes[ticker], r)
+    if acts is not None:
+        out["analyst"] = analyst_window(acts, closes.index, r)
     return out
 
 
@@ -393,13 +453,13 @@ def last_final_close(now: datetime) -> date:
     return now.date() if now.time() >= dtime(16, 30) else now.date() - timedelta(days=1)
 
 
-def fetch_prices(tickers: list[str], start: date, final: date) -> tuple[pd.DataFrame, pd.DataFrame]:
+def fetch_prices(tickers: list[str], start: date, final: date, ohl: dict | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(closes, volumes): dividend-adjusted final daily closes and share volumes for `tickers` + SPY,
-    on SPY's trading days."""
+    on SPY's trading days. Pass a dict as `ohl` to also get adjusted Open / High / Low frames in it."""
     import yfinance as yf
 
     syms = sorted(set(tickers) | {BENCH})
-    frames, vframes = [], []
+    frames, vframes, extra = [], [], {"Open": [], "High": [], "Low": []}
     for i in range(0, len(syms), 100):
         chunk = syms[i:i + 100]
         for attempt in range(2):
@@ -410,6 +470,10 @@ def fetch_prices(tickers: list[str], start: date, final: date) -> tuple[pd.DataF
                     c, v = c.to_frame(chunk[0]), v.to_frame(chunk[0])
                 frames.append(c)
                 vframes.append(v)
+                if ohl is not None:
+                    for k in extra:
+                        x = raw[k]
+                        extra[k].append(x.to_frame(chunk[0]) if isinstance(x, pd.Series) else x)
                 break
             except Exception as e:  # noqa: BLE001 — retry once, then skip the chunk
                 print(f"  price chunk {i}: {e}", flush=True)
@@ -424,8 +488,21 @@ def fetch_prices(tickers: list[str], start: date, final: date) -> tuple[pd.DataF
         raise SystemExit("earnings_test: no SPY prices from Yahoo (rate-limited?) — nothing written")
     df = df[df[BENCH].notna()]  # SPY's trading calendar
     df = df[df.index <= pd.Timestamp(final)]
+    if ohl is not None:
+        for k, fs in extra.items():
+            ohl[k] = tidy(fs).reindex(df.index)
     return df, vol.reindex(df.index)
 
+
+
+def yahoo_actions(ticker: str) -> list[dict]:
+    import yfinance as yf
+
+    try:
+        return actions_from_yahoo(yf.Ticker(ticker).upgrades_downgrades)
+    except Exception as e:  # noqa: BLE001 — some tickers have no analyst coverage
+        print(f"  {ticker}: no analyst actions ({str(e)[:80]})", flush=True)
+        return []
 
 
 def yahoo_reports(ticker: str, now: datetime, limit: int = 60) -> list[dict]:
@@ -488,12 +565,14 @@ def upsert(sb, rows: list[dict]) -> None:
 
 
 def apply_measure(row: dict, closes: pd.DataFrame, now: datetime, volumes: pd.DataFrame | None = None,
-                  buys: dict[str, list[dict]] | None = None) -> dict:
+                  buys: dict[str, list[dict]] | None = None, ohl: dict | None = None,
+                  acts: dict[str, list[dict]] | None = None) -> dict:
     """Measure a row that has a report (+ its pre-report context); set source 'late' if a live row
     was logged too late."""
     m = measure(closes, row["ticker"], _d(row["report_date"]), row["session"])
     ctx = context(closes, volumes, row["ticker"], _d(row["report_date"]), row["session"],
-                  None if buys is None else buys.get(row["ticker"], []))
+                  None if buys is None else buys.get(row["ticker"], []), ohl=ohl,
+                  acts=None if acts is None else acts.get(row["ticker"], []))
     row = {**row, **m, **ctx, "measured_at": now}
     if row["source"] == "live" and m.get("reaction_date"):
         reg = row["registered_at"]
@@ -568,7 +647,14 @@ def enrich(sb, dry_run: bool) -> list[dict]:
     tickers = sorted({r["ticker"] for r in rows})
     first = min(_d(r["report_date"]) for r in rows)
     print(f"enrich: {len(rows)} rows, {len(tickers)} tickers, reports from {first}", flush=True)
-    closes, volumes = fetch_prices(tickers, first - timedelta(days=PRICE_LOOKBACK_DAYS), last_final_close(now))
+    ohl: dict = {}
+    closes, volumes = fetch_prices(tickers, first - timedelta(days=PRICE_LOOKBACK_DAYS), last_final_close(now), ohl)
+    acts: dict[str, list[dict]] = {}
+    for i, t in enumerate(tickers):
+        acts[t] = yahoo_actions(t)
+        if i % 100 == 0:
+            print(f"  analyst actions [{i:>4}/{len(tickers)}]", flush=True)
+        time.sleep(PACE_S)
     since = first - timedelta(days=INSIDER_DAYS)
     buys = insider_buys_db(sb, tickers, since)
     missing = insider_buys_bulk(buys, set(tickers), since, now.date())
@@ -578,7 +664,7 @@ def enrich(sb, dry_run: bool) -> list[dict]:
     out = []
     for r in rows:
         ctx = context(closes, volumes, r["ticker"], _d(r["report_date"]), r["session"], buys.get(r["ticker"], []),
-                      caps.get(r["ticker"]))
+                      caps.get(r["ticker"]), ohl, acts.get(r["ticker"], []))
         sample = r.get("sample") or ("top300" if r["source"] == "backtest" else None)
         out.append({**r, **ctx, "sample": sample})
     if not dry_run:
@@ -679,11 +765,16 @@ def daily(sb, dry_run: bool) -> None:
         first = min(_d(r["report_date"]) for r in to_measure)
         start = first - timedelta(days=60)
         tickers = sorted({r["ticker"] for r in to_measure})
-        closes, volumes = fetch_prices(tickers, first - timedelta(days=PRICE_LOOKBACK_DAYS), last_final_close(now))
+        ohl: dict = {}
+        closes, volumes = fetch_prices(tickers, first - timedelta(days=PRICE_LOOKBACK_DAYS), last_final_close(now), ohl)
         buys = insider_buys_db(sb, tickers, first - timedelta(days=INSIDER_DAYS))
         buys.pop("_seen", None)
+        acts = {}
+        for t in tickers:
+            acts[t] = yahoo_actions(t)
+            time.sleep(PACE_S)
         # Re-measured daily until complete: the post-report part of the path grows each day.
-        updates += [apply_measure(r, closes, now, volumes, buys) for r in to_measure]
+        updates += [apply_measure(r, closes, now, volumes, buys, ohl, acts) for r in to_measure]
         if not dry_run:
             upsert_spy(sb, spy_returns(closes, start))
     print(f"measure: {len(to_measure)} reported, {len(updates)} rows written", flush=True)
@@ -747,7 +838,7 @@ def main() -> None:
     if args.enrich:
         rows = enrich(sb, args.dry_run)
         df = pd.DataFrame(rows)
-        for c in ("insider_buyers", "ma50_gap", "ma200_gap", "vol_path"):
+        for c in ("insider_buyers", "ma50_gap", "ma200_gap", "vol_path", "analyst", "ohlc_path"):
             print(f"  {c}: {df[c].notna().sum() if c in df else 0} of {len(df)} rows filled")
         if args.dry_run and len(df):
             print("  rows with insider buyers > 0:", int((df.insider_buyers.fillna(0) > 0).sum()))
