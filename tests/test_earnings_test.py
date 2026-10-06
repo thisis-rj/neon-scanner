@@ -204,3 +204,22 @@ def test_insider_counts_use_filing_date_window():
 
 def test_norm_ticker():
     assert et.norm_ticker(" brk.b ") == "BRK-B"
+
+
+def test_plan_sample_random_per_tier_reproducible():
+    uni = ([{"ticker": f"S{i}", "market_cap_usd": 1e9, "sector": "X"} for i in range(50)]
+           + [{"ticker": f"M{i}", "market_cap_usd": 5e9, "sector": "X"} for i in range(50)]
+           + [{"ticker": "MEGA", "market_cap_usd": 3e12, "sector": "X"},
+              {"ticker": "ETF", "market_cap_usd": 1e9, "sector": None}])
+    a = et.plan_sample(uni, {"S0"}, {"small": 10, "mid": 5, "mega": None})
+    b = et.plan_sample(uni, {"S0"}, {"small": 10, "mid": 5, "mega": None})
+    assert a == b                                            # fixed seed
+    assert sum(v == "random_small" for v in a.values()) == 10 and "S0" not in a and "ETF" not in a
+    assert sum(v == "random_mid" for v in a.values()) == 5 and a["MEGA"] == "mega_all"
+
+
+def test_context_mcap_at_report():
+    closes = make_closes(end="2024-12-31", X=lambda i: 100 + i)
+    r = 100
+    out = et.context(closes, None, "X", closes.index[r].date(), "bmo", None, cap_today=1e10)
+    assert out["mcap_at_report"] == pytest.approx(1e10 * closes["X"].iloc[r - 1] / closes["X"].iloc[-1])

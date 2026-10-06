@@ -73,6 +73,10 @@ BACKTEST_TICKERS = 300              # backtest = the 300 largest stocks on the E
 PATH_DAYS = 30                      # daily returns stored from day R-30 to R+30 for the explorer
 VOL_BASE_DAYS = 60                  # "normal" volume = average of the 60 trading days before day R-30
 INSIDER_DAYS = 90                   # insider buys FILED in the 90 calendar days before the report
+SAMPLE_SEED = 20261007              # fixed: the random size-tier samples are reproducible
+TIERS = {                           # by market cap in `tickers` today (USD)
+    "small": (3e8, 2e9), "mid": (2e9, 1e10), "large": (1e10, 2e11), "mega": (2e11, float("inf")),
+}
 PRICE_LOOKBACK_DAYS = 340           # calendar days of prices before a report: 200-day average + 30-day path
 MIN_SEASON_EVENTS = 25              # fewer events than this → the season isn't scored (5 per group)
 PACE_S = 0.3                        # between per-ticker Yahoo calls
@@ -156,8 +160,8 @@ def insider_counts(buys: list[dict], report_date: date) -> tuple[int, float]:
 
 
 def context(closes: pd.DataFrame, volumes: pd.DataFrame | None, ticker: str, report_date: date,
-            session: str, buys: list[dict] | None) -> dict:
-    """Pre-report context for cohorts (vol_path, ma gaps, insider buys). Only keys it could compute."""
+            session: str, buys: list[dict] | None, cap_today: float | None = None) -> dict:
+    """Pre-report context for cohorts (vol_path, ma gaps, insider buys, size). Only keys it could compute."""
     out: dict = {}
     if buys is not None:
         out["insider_buyers"], out["insider_buy_usd"] = insider_counts(buys, report_date)
@@ -166,6 +170,11 @@ def context(closes: pd.DataFrame, volumes: pd.DataFrame | None, ticker: str, rep
     r = reaction_index(closes.index, report_date, session)
     if r is None:
         return out
+    if cap_today:
+        s = closes[ticker].dropna()
+        then = closes[ticker].iloc[r - 1] if r >= 1 else float("nan")
+        if len(s) and pd.notna(then) and then > 0:
+            out["mcap_at_report"] = float(cap_today * then / s.iloc[-1])
     out["ma50_gap"] = ma_gap(closes[ticker], r, 50)
     out["ma200_gap"] = ma_gap(closes[ticker], r, 200)
     if volumes is not None and ticker in volumes:
@@ -564,17 +573,40 @@ def enrich(sb, dry_run: bool) -> list[dict]:
     buys = insider_buys_db(sb, tickers, since)
     missing = insider_buys_bulk(buys, set(tickers), since, now.date())
     print(f"insider buys loaded for {len(buys)} tickers; bulk quarters not available: {missing}", flush=True)
+    caps = {t["ticker"]: float(t["market_cap_usd"]) for t in
+            fetch_all(sb, "tickers", "ticker,market_cap_usd", order=("ticker",)) if t.get("market_cap_usd")}
     out = []
     for r in rows:
-        ctx = context(closes, volumes, r["ticker"], _d(r["report_date"]), r["session"], buys.get(r["ticker"], []))
-        out.append({**r, **ctx})
+        ctx = context(closes, volumes, r["ticker"], _d(r["report_date"]), r["session"], buys.get(r["ticker"], []),
+                      caps.get(r["ticker"]))
+        sample = r.get("sample") or ("top300" if r["source"] == "backtest" else None)
+        out.append({**r, **ctx, "sample": sample})
     if not dry_run:
         upsert(sb, out)
     return out
 
 
-def backfill(sb, limit: int | None, dry_run: bool) -> list[dict]:
-    """History since BACKTEST_START for the BACKTEST_TICKERS largest stocks in earnings_calendar."""
+def plan_sample(universe: list[dict], done: set[str], spec: dict[str, int | None], seed: int = SAMPLE_SEED) -> dict[str, str]:
+    """{ticker: sample label}: per size tier, `n` stocks drawn at random (None = all) from operating
+    companies (Yahoo sector known) not already in the backtest."""
+    import random
+
+    rng = random.Random(seed)
+    out: dict[str, str] = {}
+    for tier, n in spec.items():
+        lo, hi = TIERS[tier]
+        pool = sorted(u["ticker"] for u in universe
+                      if u.get("sector") and u.get("market_cap_usd") and lo <= float(u["market_cap_usd"]) < hi
+                      and u["ticker"] not in done)
+        pick = pool if n is None or n >= len(pool) else rng.sample(pool, n)
+        label = f"{tier}_all" if n is None else f"random_{tier}"
+        out.update({t: label for t in pick})
+    return out
+
+
+def backfill(sb, limit: int | None, dry_run: bool, sample: dict[str, int | None] | None = None) -> list[dict]:
+    """History since BACKTEST_START: the BACKTEST_TICKERS largest stocks in earnings_calendar, or with
+    `sample`, random stocks per size tier from `tickers`."""
     now = now_et()
     cal = fetch_all(sb, "earnings_calendar", "ticker,next_earnings,market_cap_usd", order=("ticker",))
     universe = sorted((c for c in cal if c.get("next_earnings")),
@@ -583,8 +615,12 @@ def backfill(sb, limit: int | None, dry_run: bool) -> list[dict]:
     if not dry_run:
         done = {r["ticker"] for r in fetch_all(sb, "earnings_test_events", "ticker,scheduled_date",
                                                source="backtest")}
-    top = [c["ticker"] for c in universe][:BACKTEST_TICKERS]
-    tickers = [t for t in top if t not in done][:limit]
+    if sample:
+        uni = fetch_all(sb, "tickers", "ticker,market_cap_usd,sector", order=("ticker",))
+        labels = plan_sample(uni, done, sample)
+    else:
+        labels = {t: "top300" for t in [c["ticker"] for c in universe][:BACKTEST_TICKERS]}
+    tickers = [t for t in labels if t not in done][:limit]
     print(f"backfill: {len(tickers)} tickers ({len(done)} already done)", flush=True)
 
     events: list[dict] = []
@@ -592,7 +628,7 @@ def backfill(sb, limit: int | None, dry_run: bool) -> list[dict]:
         for rep in yahoo_reports(t, now):
             if BACKTEST_START <= rep["report_date"] < LIVE_FROM:
                 events.append({"ticker": t, "scheduled_date": rep["report_date"], "source": "backtest",
-                               "status": "reported", "registered_at": now, **rep})
+                               "status": "reported", "registered_at": now, "sample": labels[t], **rep})
         if i % 100 == 0:
             print(f"  [{i:>4}/{len(tickers)}] events so far {len(events)}", flush=True)
         time.sleep(PACE_S)
@@ -700,6 +736,7 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="compute + print; write nothing")
     ap.add_argument("--limit", type=int, default=None, help="backfill: cap tickers (largest first)")
     ap.add_argument("--csv", help="backfill: also save the measured rows to this CSV")
+    ap.add_argument("--sample", help="backfill: random stocks per size tier, e.g. small:300,mid:300,large:150,mega:all")
     ap.add_argument("--enrich", action="store_true",
                     help="one-off: add volume / moving-average / insider context to measured rows")
     args = ap.parse_args()
@@ -716,7 +753,10 @@ def main() -> None:
             print("  rows with insider buyers > 0:", int((df.insider_buyers.fillna(0) > 0).sum()))
         return
     if args.backfill:
-        rows = backfill(sb, args.limit, args.dry_run)
+        spec = None
+        if args.sample:
+            spec = {k: (None if v == "all" else int(v)) for k, v in (x.split(":") for x in args.sample.split(","))}
+        rows = backfill(sb, args.limit, args.dry_run, spec)
         by = pd.Series([r["status"] for r in rows]).value_counts().to_dict() if rows else {}
         print(f"backfill rows: {len(rows)} {by}")
         if args.csv:
