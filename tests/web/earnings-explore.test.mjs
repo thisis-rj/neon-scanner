@@ -187,3 +187,13 @@ test("company size groups from market cap at the report", () => {
   assert.deepEqual(k(3e12), ["cap_mega"]);
   assert.deepEqual(k(1e8), []); // micro caps aren't a group
 });
+
+import { decodeEvents, encodeEvent } from "../../web/lib/earnings-explore.ts";
+
+test("wire format round-trips an event", () => {
+  const p = Array(61).fill(5);
+  const e = { t: "X", d: "2024-05-01", s: "amc", sec: "Tech", sur: 3.14159, src: "live", p, ib: 2, v: Array(30).fill(100), m50: 0.123456, m200: null, mc: 2.5e9 };
+  const w = { sectors: ["Tech"], spyDates: [], spyRet: [], rows: [encodeEvent(e, new Map([["Tech", 0]]))] };
+  const [back] = decodeEvents(JSON.parse(JSON.stringify(w)));
+  assert.deepEqual(back, { ...e, sur: 3.14, m50: 0.1235 });
+});

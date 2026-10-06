@@ -2,8 +2,7 @@ import { FlaskConicalIcon } from "lucide-react";
 import { Pct, Ticker } from "@/components/app/cells";
 import { PageHeader } from "@/components/app/page-header";
 import { TableCard } from "@/components/app/table-card";
-import { EarningsAnswer } from "@/components/app/earnings-test/answer";
-import { EarningsExplorer } from "@/components/app/earnings-test/explorer";
+import { AdvancedTab, AnswerTab } from "@/components/app/earnings-test/data-tabs";
 import { EarningsScan } from "@/components/app/earnings-test/scan";
 import { SeasonChart } from "@/components/app/earnings-test/season-chart";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { fetchEarningsTest, fetchExplorer, type CohortScore, type LiveEvent, type Spread } from "@/lib/earnings-test";
+import { fetchEarningsTest, type CohortScore, type LiveEvent, type Spread } from "@/lib/earnings-test";
 
 export const dynamic = "force-dynamic";
 
@@ -182,7 +181,7 @@ function LogTable({ rows }: { rows: LiveEvent[] }) {
 }
 
 export default async function EarningsTestPage() {
-  const [data, explorer] = await Promise.all([fetchEarningsTest(), fetchExplorer().catch(() => null)]);
+  const data = await fetchEarningsTest();
   const title = "Earnings test";
   const description = (
     <>
@@ -246,20 +245,7 @@ export default async function EarningsTestPage() {
         </TabsList>
 
         <TabsContent value="answer">
-          {explorer && explorer.events.length > 0 ? (
-            <EarningsAnswer
-              events={explorer.events}
-              spyDates={explorer.spyDates}
-              spyRet={explorer.spyRet}
-              hasLive={explorer.events.some((e) => e.src === "live")}
-            />
-          ) : (
-            <Empty className="border py-16">
-              <EmptyDescription>
-                No return paths stored yet. Run python -m ingest.earnings_test --backfill.
-              </EmptyDescription>
-            </Empty>
-          )}
+          <AnswerTab />
         </TabsContent>
 
         <TabsContent value="scan">
@@ -267,21 +253,7 @@ export default async function EarningsTestPage() {
         </TabsContent>
 
         <TabsContent value="explore">
-          {explorer && explorer.events.length > 0 ? (
-            <EarningsExplorer
-              events={explorer.events}
-              spyDates={explorer.spyDates}
-              spyRet={explorer.spyRet}
-              sectors={explorer.sectors}
-              hasLive={explorer.events.some((e) => e.src === "live")}
-            />
-          ) : (
-            <Empty className="border py-16">
-              <EmptyDescription>
-                No return paths stored yet. Run python -m ingest.earnings_test --backfill.
-              </EmptyDescription>
-            </Empty>
-          )}
+          <AdvancedTab />
         </TabsContent>
 
         <TabsContent value="fixed" className="flex flex-col gap-8">

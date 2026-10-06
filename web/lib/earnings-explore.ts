@@ -626,3 +626,57 @@ export function answer(prepared: Prepared[], s: AnswerSettings): Answer {
     points,
   };
 }
+
+// ── Wire format for /earnings-test/data (one compact row per report) ─────────
+// [ticker, reactionDate, session, sectorIdx (-1 = none), surprise, live (0/1),
+//  insiderBuyers, ma50Gap, ma200Gap, mcapMillions, path(61), volPath(30) | null]
+export type WireRow = [
+  string,
+  string,
+  ExploreEvent["s"],
+  number,
+  number | null,
+  0 | 1,
+  number | null,
+  number | null,
+  number | null,
+  number | null,
+  (number | null)[],
+  (number | null)[] | null,
+];
+export type Wire = { sectors: string[]; spyDates: string[]; spyRet: number[]; rows: WireRow[] };
+
+export function encodeEvent(e: ExploreEvent, sectorIdx: Map<string, number>): WireRow {
+  const r4 = (x: number | null | undefined) => (x == null ? null : Math.round(x * 1e4) / 1e4);
+  return [
+    e.t,
+    e.d,
+    e.s,
+    e.sec == null ? -1 : (sectorIdx.get(e.sec) ?? -1),
+    e.sur == null ? null : Math.round(e.sur * 100) / 100,
+    e.src === "live" ? 1 : 0,
+    e.ib ?? null,
+    r4(e.m50),
+    r4(e.m200),
+    e.mc == null ? null : Math.round(e.mc / 1e6),
+    e.p,
+    e.v ?? null,
+  ];
+}
+
+export function decodeEvents(w: Wire): ExploreEvent[] {
+  return w.rows.map((r) => ({
+    t: r[0],
+    d: r[1],
+    s: r[2],
+    sec: r[3] < 0 ? null : w.sectors[r[3]],
+    sur: r[4],
+    src: r[5] ? "live" : "backtest",
+    ib: r[6],
+    m50: r[7],
+    m200: r[8],
+    mc: r[9] == null ? null : r[9] * 1e6,
+    p: r[10],
+    v: r[11],
+  }));
+}

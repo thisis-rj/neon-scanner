@@ -126,6 +126,14 @@ export async function fetchEarningsTest(): Promise<EarningsTestData | null> {
   };
 }
 
+/** Compact JSON for /earnings-test/data. */
+export async function fetchExplorerWire(): Promise<import("@/lib/earnings-explore").Wire> {
+  const { encodeEvent } = await import("@/lib/earnings-explore");
+  const d = await fetchExplorer();
+  const idx = new Map(d.sectors.map((x, i) => [x, i]));
+  return { sectors: d.sectors, spyDates: d.spyDates, spyRet: d.spyRet, rows: d.events.map((e) => encodeEvent(e, idx)) };
+}
+
 export type ExplorerData = {
   events: import("@/lib/earnings-explore").ExploreEvent[];
   spyDates: string[];
