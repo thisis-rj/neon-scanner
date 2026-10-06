@@ -139,17 +139,17 @@ def conditions(df: pd.DataFrame) -> dict[str, tuple[str, str, np.ndarray]]:
     return c
 
 
-def cuts(conds: dict[str, tuple[str, str, np.ndarray]]):
-    """Singles, then pairs from different families. EPS conditions only pair/score with 'drift'."""
+def cuts(conds: dict[str, tuple[str, str, np.ndarray]], depth: int = 2):
+    """Every combination of 1..depth conditions, each from a different family.
+    EPS conditions only score with 'drift'."""
     keys = list(conds)
-    for k in keys:
-        yield (k,)
-    for a, b in combinations(keys, 2):
-        if conds[a][0] != conds[b][0]:
-            yield (a, b)
+    for size in range(1, depth + 1):
+        for combo in combinations(keys, size):
+            if len({conds[k][0] for k in combo}) == size:
+                yield combo
 
 
-def scan(df: pd.DataFrame, outcomes: dict[str, str] | None = None) -> list[dict]:
+def scan(df: pd.DataFrame, outcomes: dict[str, str] | None = None, depth: int = 2) -> list[dict]:
     """Two-step scan over all cuts × outcomes. df: one row per report from features()."""
     OUTCOMES = outcomes or globals()["OUTCOMES"]
     conds = conditions(df)
@@ -161,7 +161,9 @@ def scan(df: pd.DataFrame, outcomes: dict[str, str] | None = None) -> list[dict]
     base_up = {o: float((df[o] > 0).mean()) for o in OUTCOMES}
 
     rows = []
-    for cut in cuts(conds):
+    if not any(o == "drift" for o in OUTCOMES):  # EPS (known after the report) can't score these outcomes
+        conds = {k: v for k, v in conds.items() if v[0] != "eps"}
+    for cut in cuts(conds, depth):
         mask = np.logical_and.reduce([conds[k][2] for k in cut])
         has_eps = any(conds[k][0] == "eps" for k in cut)
         for o in OUTCOMES:
@@ -293,6 +295,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--csv")
+    ap.add_argument("--depth", type=int, default=2, help="combine up to this many conditions (default 2)")
     ap.add_argument("--entry", help="Vijay's trade: comma-separated entry days, e.g. 10,5,3 (prints only)")
     args = ap.parse_args()
 
@@ -307,7 +310,7 @@ def main() -> None:
     if args.entry:
         for x in [int(v) for v in args.entry.split(",")]:
             d = features(events, spy, entry=x)
-            res = scan(d, TRADE_OUTCOMES)
+            res = scan(d, TRADE_OUTCOMES, args.depth)
             head, kept = res[0], res[1:]
             held = [r for r in kept if r["verdict"] != "did not hold"]
             print(f"\n== buy {x} days before: {head['tested']} tests, {head['kept']} kept by search half, "

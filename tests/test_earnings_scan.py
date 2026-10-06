@@ -90,3 +90,11 @@ def test_entry_mode_uses_only_information_known_at_entry():
     assert r.skip == pytest.approx(0.01) and r.through == pytest.approx(0.01)   # held days -4..-1 / -4..0
     assert r.pre == pytest.approx(0.0)                                          # days -14..-5: before the jump
     assert pd.isna(r.ma50_gap) and pd.isna(r.ma200_gap)                         # measured after entry: dropped
+
+
+def test_cuts_depth_three_distinct_families():
+    conds = {"a1": ("A", "", None), "a2": ("A", "", None), "b": ("B", "", None), "c": ("C", "", None)}
+    got = list(sc.cuts(conds, depth=3))
+    assert ("a1", "b", "c") in got and ("a2", "b", "c") in got
+    assert not any(len({k[0] for k in cut}) < len(cut) for cut in got)   # never two from family A
+    assert len([c for c in got if len(c) == 3]) == 2
