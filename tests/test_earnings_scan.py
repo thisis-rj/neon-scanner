@@ -98,3 +98,25 @@ def test_cuts_depth_three_distinct_families():
     assert ("a1", "b", "c") in got and ("a2", "b", "c") in got
     assert not any(len({k[0] for k in cut}) < len(cut) for cut in got)   # never two from family A
     assert len([c for c in got if len(c) == 3]) == 2
+
+
+def test_analyst_signals_only_count_actions_known_at_entry():
+    an = [[-30, "up", 0.1], [-8, "up", 0.2], [-6, "down", -0.1], [-5, "main", 0.05], [-3, "up", 0.3]]
+    s = sc.analyst_signals(an, last=-5)          # entry at day -5: the day -3 upgrade isn't known yet
+    assert (s["an_n"], s["an_up"], s["an_down"]) == (3, 1, 1)     # -30 is outside the 21-day lookback
+    assert s["pt_net"] == 1 and s["pt_avg"] == pytest.approx((0.2 - 0.1 + 0.05) / 3)
+    assert sc.analyst_signals(None, -5) == {}
+    assert sc.analyst_signals([], -5)["an_n"] == 0
+
+
+def test_gap_signals_window_vs_earlier():
+    ohlc = [[0, 1000]] * 30                       # 1% daily range, no gaps
+    ohlc = [list(x) for x in ohlc]
+    for k in range(-10, -4):                      # window -10..-5: 2% range
+        ohlc[k + 30][1] = 2000
+    ohlc[-5 + 30][0] = 2500                       # entry day gaps up 2.5%
+    ohlc[-7 + 30][0] = -3000
+    g = sc.gap_signals(ohlc, (-14, -5))
+    assert g["range_ratio"] == pytest.approx(((4 * 1 + 6 * 2) / 10) / 1.0)
+    assert g["gap_last"] == pytest.approx(0.025) and g["gaps_big"] == 2
+    assert sc.gap_signals(None, (-14, -5)) == {}

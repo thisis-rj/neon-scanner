@@ -42,7 +42,8 @@ from ingest import earnings_test as et
 SPLIT_DATE = "2024-04-01"   # search half before, check half from (reaction date)
 FDR_Q = 0.10
 MIN_N = 60                  # reports a cut needs in EACH half to be tested
-PRE = (-10, -1)             # the before window for move / shape / volume conditions
+PRE = (-10, -1)             # the before window for move / shape / volume / gap conditions
+ANALYST_LOOKBACK = 21       # trading days of analyst actions counted, ending at the window's last day
 # Vijay's trade (--entry X): buy at the close X trading days before day 0, sell at the close of
 # day -1 (skip the report), day 0 (through the reaction) or day +5. Conditions then use only what
 # is known at the entry close (see features()).
@@ -131,6 +132,23 @@ def conditions(df: pd.DataFrame) -> dict[str, tuple[str, str, np.ndarray]]:
     add("sess_amc", "time", "Reported after close", df.session == "amc")
     for sec in sorted(df.sector.dropna().unique()):
         add(f"sec_{sec}", "sector", sec, df.sector == sec)
+    if "an_up" in df:
+        add("an_up", "analysts", "Analyst upgrade (21d)", df.an_up > 0)
+        add("an_down", "analysts", "Analyst downgrade (21d)", df.an_down > 0)
+        add("an_net_pos", "analysts", "More upgrades than downgrades", df.an_up > df.an_down)
+        add("an_net_neg", "analysts", "More downgrades than upgrades", df.an_down > df.an_up)
+        add("pt_raises", "analysts", "Target raises outnumber cuts by 2+", df.pt_net >= 2)
+        add("pt_cuts", "analysts", "Target cuts outnumber raises by 2+", df.pt_net <= -2)
+        add("pt_avg_up", "analysts", "Avg target change > +5%", df.pt_avg > 0.05)
+        add("pt_avg_down", "analysts", "Avg target change < −5%", df.pt_avg < -0.05)
+        add("an_busy", "analysts", "4+ analyst actions (21d)", df.an_n >= 4)
+        add("an_none", "analysts", "No analyst action (21d)", df.an_n == 0)
+    if "range_ratio" in df:
+        add("range_wide", "gaps", "Daily range ≥1.5× earlier", df.range_ratio >= 1.5)
+        add("range_calm", "gaps", "Daily range ≤0.8× earlier", df.range_ratio <= 0.8)
+        add("gap_up_last", "gaps", "Gapped up ≥2% on entry day", df.gap_last >= 0.02)
+        add("gap_down_last", "gaps", "Gapped down ≥2% on entry day", df.gap_last <= -0.02)
+        add("gaps_many", "gaps", "2+ big gaps (±2%) in window", df.gaps_big >= 2)
     add("prev_up", "previous", "Last report jumped >5%", df.prev_react > 0.05)
     add("prev_down", "previous", "Last report dropped >5%", df.prev_react < -0.05)
     s = df.surprise_pct
@@ -235,6 +253,7 @@ def features(events: list[dict], spy: list[dict], entry: int | None = None) -> p
             tier = next((t for t, (lo, hi) in et.TIERS.items() if lo <= cap < hi), "micro" if cap < 3e8 else None)
         react = ex(0, 0)
         ma50, ma200 = _f(e.get("ma50_gap")), _f(e.get("ma200_gap"))
+        extra = analyst_signals(e.get("analyst"), pre[1]) | gap_signals(e.get("ohlc_path"), pre)
         trade = {}
         if entry is not None:
             ma50 = ma200 = None  # measured at day -1, after the entry: not known when buying
@@ -247,7 +266,7 @@ def features(events: list[dict], spy: list[dict], entry: int | None = None) -> p
             "vol": float(np.mean(vv)) / 100 if vv else np.nan,
             "vol_last": (v[pre[1] + 30] / 100) if v and v[pre[1] + 30] is not None else np.nan,
             "insider_buyers": e.get("insider_buyers"), "ma50_gap": ma50, "ma200_gap": ma200, "session": e.get("session"), "sector": e.get("sector"),
-            "surprise_pct": _f(e.get("surprise_pct")), "tier": tier,
+            "surprise_pct": _f(e.get("surprise_pct")), "tier": tier, **extra,
         })
     df = pd.DataFrame(recs)
     if df.empty:
@@ -257,6 +276,40 @@ def features(events: list[dict], spy: list[dict], entry: int | None = None) -> p
     df["prev_react"] = df.groupby("ticker").react.shift(1)
     df["insider_buyers"] = pd.to_numeric(df.insider_buyers)
     return df
+
+
+def analyst_signals(analyst: list | None, last: int) -> dict:
+    """Counts over the ANALYST_LOOKBACK trading days ending at day `last` (known at that close).
+    {} when the report has no analyst data loaded (column empty) — kept apart from 'no actions'."""
+    if analyst is None:
+        return {}
+    w = [a for a in analyst if last - ANALYST_LOOKBACK + 1 <= a[0] <= last]
+    pts = [a[2] for a in w if a[2] is not None and a[2] != 0]
+    return {
+        "an_n": len(w),
+        "an_up": sum(a[1] == "up" for a in w),
+        "an_down": sum(a[1] == "down" for a in w),
+        "an_init": sum(a[1] == "init" for a in w),
+        "pt_net": sum(p > 0 for p in pts) - sum(p < 0 for p in pts),
+        "pt_avg": float(np.mean(pts)) if pts else np.nan,
+    }
+
+
+def gap_signals(ohlc: list | None, pre: tuple[int, int]) -> dict:
+    """From [gap, range] for days -30..-1: range in the window vs earlier days, entry-day gap, big gaps."""
+    if not ohlc:
+        return {}
+    a, b = pre
+    get = lambda k, j: (ohlc[k + 30][j] / 1e5) if -30 <= k <= -1 and ohlc[k + 30][j] is not None else np.nan  # noqa: E731
+    win = [get(k, 1) for k in range(a, b + 1)]
+    base = [get(k, 1) for k in range(-30, a)]
+    gaps = [get(k, 0) for k in range(a, b + 1)]
+    wr, br = np.nanmean(win) if win else np.nan, np.nanmean(base) if len(base) >= 5 else np.nan
+    return {
+        "range_ratio": wr / br if br and not np.isnan(br) and br > 0 else np.nan,
+        "gap_last": get(b, 0),
+        "gaps_big": int(np.sum(np.abs(np.array(gaps)) >= 0.02)) if gaps else 0,
+    }
 
 
 def shape_patterns(days: list[float]) -> list[str]:
@@ -304,7 +357,7 @@ def main() -> None:
     sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SECRET_KEY"])
     events = et.fetch_all(sb, "earnings_test_events",
                           "ticker,reaction_date,session,sector,surprise_pct,path,vol_path,ma50_gap,ma200_gap,"
-                          "insider_buyers,mcap_at_report,status", source="backtest")
+                          "insider_buyers,mcap_at_report,analyst,ohlc_path,status", source="backtest")
     events = [e for e in events if e["status"] in ("reacted", "complete")]
     spy = et.fetch_all(sb, "earnings_test_spy", "date,ret", order=("date",))
     if args.entry:

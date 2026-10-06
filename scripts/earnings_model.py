@@ -44,6 +44,9 @@ def design(df: pd.DataFrame, sectors: list[str]) -> pd.DataFrame:
         "insiders": df.insider_buyers.astype(float), "prev_react": df.prev_react,
         "amc": (df.session == "amc").astype(float),
     })
+    for c in ["an_n", "an_up", "an_down", "an_init", "pt_net", "pt_avg", "range_ratio", "gap_last", "gaps_big"]:
+        if c in df:
+            x[c] = df[c].astype(float)
     for t in ["small", "mid", "large", "mega"]:
         x[f"tier_{t}"] = (df.tier == t).astype(float)
     for s in sectors:
@@ -83,7 +86,7 @@ def main() -> None:
     sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SECRET_KEY"])
     events = [e for e in et.fetch_all(sb, "earnings_test_events",
                                       "ticker,reaction_date,session,sector,surprise_pct,path,vol_path,ma50_gap,"
-                                      "ma200_gap,insider_buyers,mcap_at_report,status", source="backtest")
+                                      "ma200_gap,insider_buyers,mcap_at_report,analyst,ohlc_path,status", source="backtest")
               if e["status"] in ("reacted", "complete")]
     spy = et.fetch_all(sb, "earnings_test_spy", "date,ret", order=("date",))
     rng = np.random.default_rng(SEED)
