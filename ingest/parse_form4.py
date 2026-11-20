@@ -158,11 +158,19 @@ def parse_form4(xml_bytes: bytes) -> list[dict[str, Any]]:
     for c in root:
         if _localname(c.tag) != "reportingOwner":
             continue
+        flag = lambda t: (_text_of(c, "reportingOwnerRelationship", t) or "").lower() in ("1", "true")
         owners.append({
             "cik": _text_of(c, "reportingOwnerId", "rptOwnerCik"),
             "name": _text_of(c, "reportingOwnerId", "rptOwnerName"),
+            "officer_title": _text_of(c, "reportingOwnerRelationship", "officerTitle"),
+            "is_director": flag("isDirector"),
+            "is_officer": flag("isOfficer"),
+            "is_ten_pct": flag("isTenPercentOwner"),
         })
-    primary_owner = owners[0] if owners else {"cik": None, "name": None}
+    primary_owner = owners[0] if owners else {
+        "cik": None, "name": None, "officer_title": None,
+        "is_director": None, "is_officer": None, "is_ten_pct": None,
+    }
 
     # Walk non-derivative transactions
     rows: list[dict[str, Any]] = []
@@ -189,6 +197,10 @@ def parse_form4(xml_bytes: bytes) -> list[dict[str, Any]]:
             rows.append({
                 "reporter_cik": (primary_owner["cik"] or "").zfill(10) if primary_owner["cik"] else None,
                 "reporter_name": primary_owner["name"],
+                "officer_title": primary_owner["officer_title"],
+                "is_director": primary_owner["is_director"],
+                "is_officer": primary_owner["is_officer"],
+                "is_ten_pct": primary_owner["is_ten_pct"],
                 "issuer_cik": (issuer_cik or "").zfill(10) if issuer_cik else None,
                 "issuer_name": issuer_name,
                 "ticker": ticker,
@@ -268,10 +280,39 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--reparse", action="store_true")
+    # Targeted reparse (e.g. backfill role columns for a few names):
+    #   --tickers META,MSFT --since 2026-08-01
+    p.add_argument("--tickers", type=str, default=None)
+    p.add_argument("--since", type=str, default=None)
     args = p.parse_args()
 
     sb = _supabase()
-    pending = get_unparsed_filings(sb, reparse=args.reparse)
+    if args.tickers:
+        tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+        ids: set[str] = set()
+        off = 0
+        while True:
+            q = sb.table("events_form4").select("filing_id").in_("ticker", tickers)
+            if args.since:
+                q = q.gte("transaction_date", args.since)
+            b = q.order("filing_id").range(off, off + 999).execute()
+            ids.update(r["filing_id"] for r in b.data or [])
+            if not b.data or len(b.data) < 1000:
+                break
+            off += 1000
+        pending = []
+        idl = sorted(ids)
+        for i in range(0, len(idl), 200):
+            pending += (
+                sb.table("filings_raw")
+                .select("id,accession_number,cik,filer_name,filed_at,primary_doc_url")
+                .in_("id", idl[i:i + 200])
+                .execute()
+                .data
+                or []
+            )
+    else:
+        pending = get_unparsed_filings(sb, reparse=args.reparse)
     if args.limit:
         pending = pending[: args.limit]
 

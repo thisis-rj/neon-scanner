@@ -259,14 +259,15 @@ export type SellLog = {
 
 export type PocketCash = { deposited: number; withdrawn: number; net: number };
 
+export type InsiderTrade = { name: string; role: string | null; date: string; amount: number | null };
+
 export type StockSignals = {
-  insiderBuys: { count: number; latest: string | null };
-  insiderSells: { count: number; latest: string | null };
+  insiderBuys: InsiderTrade[]; // newest first, last 90 days
+  insiderSells: InsiderTrade[];
   fundAdded: number;
   fundTrimmed: number;
   fundPeriod: string | null;
   activist: { subtype: string; filer: string; date: string } | null;
-  buyScore: number | null;
 };
 
 const PEOPLE = ["Riya", "Vijay"] as const;
@@ -608,23 +609,52 @@ function PocketBand({ cash, value, usdInr }: { cash: PocketCash; value: number; 
 
 function sigHasActivity(s: StockSignals): boolean {
   return (
-    s.insiderBuys.count > 0 ||
-    s.insiderSells.count > 0 ||
+    s.insiderBuys.length > 0 ||
+    s.insiderSells.length > 0 ||
     s.fundAdded > 0 ||
     s.fundTrimmed > 0 ||
-    !!s.activist ||
-    (s.buyScore != null && s.buyScore > 0)
+    !!s.activist
   );
 }
 function sigLatest(s: StockSignals): string {
-  return [s.insiderBuys.latest, s.insiderSells.latest, s.activist?.date ?? null]
+  return [s.insiderBuys[0]?.date ?? null, s.insiderSells[0]?.date ?? null, s.activist?.date ?? null]
     .filter(Boolean)
     .sort()
     .reverse()[0] as string ?? "";
 }
 
+function InsiderList({ kind, trades }: { kind: "buy" | "sell"; trades: InsiderTrade[] }) {
+  return (
+    <Table className="text-xs">
+      <TableHeader>
+        <TableRow>
+          <TableHead>{kind === "buy" ? "Bought by" : "Sold by"}</TableHead>
+          <TableHead>Role</TableHead>
+          <TableHead>Date</TableHead>
+          <TableHead className="text-right">Amount</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {trades.map((t, i) => (
+          <TableRow key={i}>
+            <TableCell className="font-medium">{t.name}</TableCell>
+            <TableCell className="text-muted-foreground">{t.role ?? "—"}</TableCell>
+            <TableCell className="tabular-nums text-muted-foreground">{shortDate(t.date)}</TableCell>
+            <TableCell className={cn("text-right tabular-nums", kind === "buy" ? "text-positive" : "text-negative")}>
+              {t.amount == null ? "—" : fmtUsd(t.amount)}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
 function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockSignals }[] }) {
+  // Which pill is open: "TSM|buy", "META|sell", …
+  const [open, setOpen] = useState<string | null>(null);
   if (rows.length === 0) return null;
+  const toggle = (k: string) => setOpen((o) => (o === k ? null : k));
   return (
     <Card size="sm">
       <CardHeader className="border-b">
@@ -632,46 +662,49 @@ function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockS
           Signals on your stocks
         </CardTitle>
         <CardAction className="text-[11px] text-muted-foreground">
-          insider + activist = last 90 days (dated) · 13F = latest quarter, 45-day delayed
+          click an insider pill for who · insider + activist = last 90 days · 13F = latest quarter, 45-day delayed
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col divide-y divide-border">
         {rows.map(({ ticker, name, s }) => (
-          <div key={ticker} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2 text-xs first:pt-0 last:pb-0">
-            <span className="w-32 shrink-0 truncate">
-              <span className="font-mono font-medium text-foreground">{ticker}</span>
-              <span className="ml-1.5 text-muted-foreground">{name}</span>
-            </span>
-            {s.insiderSells.count > 0 && (
-              <Badge variant="negative" className="font-normal">
-                ▼ {s.insiderSells.count} insider sell{s.insiderSells.count > 1 ? "s" : ""}
-                {s.insiderSells.latest ? ` · ${daysAgo(s.insiderSells.latest)}` : ""}
-              </Badge>
-            )}
-            {s.insiderBuys.count > 0 && (
-              <Badge variant="positive" className="font-normal">
-                ▲ {s.insiderBuys.count} insider buy{s.insiderBuys.count > 1 ? "s" : ""}
-                {s.insiderBuys.latest ? ` · ${daysAgo(s.insiderBuys.latest)}` : ""}
-              </Badge>
-            )}
-            {(s.fundAdded > 0 || s.fundTrimmed > 0) && (
-              <span className="text-muted-foreground">
-                funds <span className="text-positive">+{s.fundAdded}</span>
-                <span className="mx-0.5">/</span>
-                <span className="text-negative">−{s.fundTrimmed}</span>
-                {s.fundPeriod ? ` (${s.fundPeriod.slice(0, 7)})` : ""}
+          <div key={ticker} className="flex flex-col gap-2 py-2 text-xs first:pt-0 last:pb-0">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className="w-32 shrink-0 truncate">
+                <span className="font-mono font-medium text-foreground">{ticker}</span>
+                <span className="ml-1.5 text-muted-foreground">{name}</span>
               </span>
-            )}
-            {s.activist && (
-              <Badge variant="warning" className="font-normal">
-                {s.activist.subtype} · {s.activist.filer} · {daysAgo(s.activist.date)}
-              </Badge>
-            )}
-            {s.buyScore != null && s.buyScore > 0 && (
-              <Badge variant="info" className="font-normal" title="Confluence buy-signal score (open a row for its components)">
-                Buy signal {s.buyScore.toFixed(0)}
-              </Badge>
-            )}
+              {s.insiderSells.length > 0 && (
+                <button type="button" onClick={() => toggle(`${ticker}|sell`)}>
+                  <Badge variant="negative" className="cursor-pointer font-normal">
+                    ▼ {s.insiderSells.length} insider sell{s.insiderSells.length > 1 ? "s" : ""} · {daysAgo(s.insiderSells[0].date)}
+                    <ChevronRightIcon className={cn("size-3 transition-transform", open === `${ticker}|sell` && "rotate-90")} />
+                  </Badge>
+                </button>
+              )}
+              {s.insiderBuys.length > 0 && (
+                <button type="button" onClick={() => toggle(`${ticker}|buy`)}>
+                  <Badge variant="positive" className="cursor-pointer font-normal">
+                    ▲ {s.insiderBuys.length} insider buy{s.insiderBuys.length > 1 ? "s" : ""} · {daysAgo(s.insiderBuys[0].date)}
+                    <ChevronRightIcon className={cn("size-3 transition-transform", open === `${ticker}|buy` && "rotate-90")} />
+                  </Badge>
+                </button>
+              )}
+              {(s.fundAdded > 0 || s.fundTrimmed > 0) && (
+                <span className="text-muted-foreground">
+                  funds <span className="text-positive">+{s.fundAdded}</span>
+                  <span className="mx-0.5">/</span>
+                  <span className="text-negative">−{s.fundTrimmed}</span>
+                  {s.fundPeriod ? ` (${s.fundPeriod.slice(0, 7)})` : ""}
+                </span>
+              )}
+              {s.activist && (
+                <Badge variant="warning" className="font-normal">
+                  {s.activist.subtype} · {s.activist.filer} · {daysAgo(s.activist.date)}
+                </Badge>
+              )}
+            </div>
+            {open === `${ticker}|buy` && <InsiderList kind="buy" trades={s.insiderBuys} />}
+            {open === `${ticker}|sell` && <InsiderList kind="sell" trades={s.insiderSells} />}
           </div>
         ))}
       </CardContent>

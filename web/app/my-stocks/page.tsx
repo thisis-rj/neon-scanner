@@ -1,7 +1,7 @@
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo } from "@/lib/filers";
 import { PageHeader } from "@/components/app/page-header";
-import { MyStocksTabs, type Holding, type SellLog, type PocketCash, type StockSignals } from "@/components/MyStocksTabs";
+import { MyStocksTabs, type Holding, type SellLog, type PocketCash, type StockSignals, type InsiderTrade } from "@/components/MyStocksTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -165,47 +165,91 @@ async function loadData(): Promise<{
   // ── Active signals on held stocks ─────────────────────────────────────────
   // ACTIVE (dated, filed within days): insider Form 4 buys/sells + activist 13D,
   // last 90 days. LAGGING context: latest-quarter 13F fund adds/trims (quarterly,
-  // 45-day delayed). Plus the confluence buy score. Aggregated per ticker so a
-  // name with 100+ insider filings doesn't flood the feed.
+  // 45-day delayed). Each insider trade is kept (name, role, date, amount); the
+  // card shows a count pill per ticker and lists the trades on click.
   const heldTickers = [...new Set(holdings.map((h) => h.ticker))];
   const signals: Record<string, StockSignals> = {};
   const sig = (t: string): StockSignals =>
     (signals[t] ??= {
-      insiderBuys: { count: 0, latest: null },
-      insiderSells: { count: 0, latest: null },
+      insiderBuys: [],
+      insiderSells: [],
       fundAdded: 0,
       fundTrimmed: 0,
       fundPeriod: null,
       activist: null,
-      buyScore: null,
     });
   if (heldTickers.length) {
     const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
 
+    // Role label from the Form 4 reporter flags.
+    const roleOf = (r: Record<string, unknown>): string | null => {
+      if (r.officer_title) return String(r.officer_title);
+      if (r.reporter_is_director) return "Director";
+      if (r.reporter_is_ten_pct) return "10% owner";
+      if (r.reporter_is_officer) return "Officer";
+      return null;
+    };
+
+    // Insider BUYS (open-market, code P) — insider_transactions carries role + $ value.
     const { data: ib } = await sb
       .from("insider_transactions")
-      .select("issuer_ticker,transaction_date")
+      .select("issuer_ticker,reporter_cik,reporter_name,officer_title,reporter_is_director,reporter_is_officer,reporter_is_ten_pct,transaction_date,shares,price,value_usd")
       .in("issuer_ticker", heldTickers)
       .eq("transaction_code", "P")
-      .gte("transaction_date", since);
+      .gte("transaction_date", since)
+      .order("transaction_date", { ascending: false });
     for (const r of ib ?? []) {
-      const s = sig(String(r.issuer_ticker));
-      s.insiderBuys.count++;
-      const d = String(r.transaction_date);
-      if (!s.insiderBuys.latest || d > s.insiderBuys.latest) s.insiderBuys.latest = d;
+      const shares = r.shares == null ? null : Number(r.shares);
+      const price = r.price == null ? null : Number(r.price);
+      sig(String(r.issuer_ticker)).insiderBuys.push({
+        name: String(r.reporter_name),
+        role: roleOf(r),
+        date: String(r.transaction_date),
+        amount: r.value_usd != null ? Number(r.value_usd) : shares != null && price != null ? shares * price : null,
+      });
     }
 
+    // Insider SELLS (code S) live in events_form4 (role columns from migration 037).
     const { data: isl } = await sb
       .from("events_form4")
-      .select("ticker,transaction_date")
+      .select("ticker,reporter_name,officer_title,is_director,is_officer,is_ten_pct,transaction_date,shares,price")
       .in("ticker", heldTickers)
       .eq("transaction_code", "S")
-      .gte("transaction_date", since);
+      .gte("transaction_date", since)
+      .order("transaction_date", { ascending: false });
     for (const r of isl ?? []) {
-      const s = sig(String(r.ticker));
-      s.insiderSells.count++;
-      const d = String(r.transaction_date);
-      if (!s.insiderSells.latest || d > s.insiderSells.latest) s.insiderSells.latest = d;
+      const shares = r.shares == null ? null : Number(r.shares);
+      const price = r.price == null ? null : Number(r.price);
+      sig(String(r.ticker)).insiderSells.push({
+        name: String(r.reporter_name),
+        role: roleOf({
+          officer_title: r.officer_title,
+          reporter_is_director: r.is_director,
+          reporter_is_ten_pct: r.is_ten_pct,
+          reporter_is_officer: r.is_officer,
+        }),
+        date: String(r.transaction_date),
+        amount: shares != null && price != null ? shares * price : null,
+      });
+    }
+
+    // One sale/buy is often filed as several same-day chunks — merge same person + same day.
+    const merge = (list: InsiderTrade[]): InsiderTrade[] => {
+      const m = new Map<string, InsiderTrade>();
+      for (const t of list) {
+        const k = `${t.name}|${t.date}`;
+        const cur = m.get(k);
+        if (!cur) m.set(k, { ...t });
+        else {
+          cur.amount = cur.amount == null || t.amount == null ? (cur.amount ?? t.amount) : cur.amount + t.amount;
+          cur.role ??= t.role;
+        }
+      }
+      return [...m.values()].sort((a, b) => b.date.localeCompare(a.date) || (b.amount ?? 0) - (a.amount ?? 0));
+    };
+    for (const s of Object.values(signals)) {
+      s.insiderBuys = merge(s.insiderBuys);
+      s.insiderSells = merge(s.insiderSells);
     }
 
     const { data: a13 } = await sb
@@ -241,12 +285,6 @@ async function loadData(): Promise<{
       const e = String(r.event);
       if (e === "opened" || e === "added") s.fundAdded++;
       else if (e === "trimmed" || e === "exited") s.fundTrimmed++;
-    }
-
-    const { data: sl } = await sb.from("signals_latest").select("ticker,score").in("ticker", heldTickers);
-    for (const r of sl ?? []) {
-      const s = sig(String(r.ticker));
-      s.buyScore = r.score == null ? null : Number(r.score);
     }
   }
 
