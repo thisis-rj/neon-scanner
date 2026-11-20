@@ -216,16 +216,6 @@ function FilterForm({ f }: { f: Filters }) {
             </Field>
           </div>
           <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
-            <Field label="Mkt cap ($M)" htmlFor="cap_min">
-              <div className="flex items-center gap-1.5">
-                <Input id="cap_min" name="cap_min" type="number" min="0" placeholder="min" defaultValue={f.capMinM ?? ""} className="w-24 tabular-nums" />
-                <span className="text-muted-foreground">–</span>
-                <Input name="cap_max" type="number" min="0" placeholder="max" aria-label="Max market cap ($M)" defaultValue={f.capMaxM ?? ""} className="w-24 tabular-nums" />
-              </div>
-            </Field>
-            <Field label="Min avg $ volume ($M/day)" htmlFor="vol_min">
-              <Input id="vol_min" name="vol_min" type="number" min="0" defaultValue={f.volMinM ?? ""} className="w-28 tabular-nums" />
-            </Field>
             <Field label="6M return (%)" htmlFor="ret6_min">
               <div className="flex items-center gap-1.5">
                 <Input id="ret6_min" name="ret6_min" type="number" placeholder="min" defaultValue={f.ret6MinPct ?? ""} className="w-20 tabular-nums" />
@@ -360,7 +350,7 @@ function StockTable({ f, rows, watchlist }: { f: Filters; rows: FlowRow[]; watch
               {head("label", "Label")}
               {head("net", "Net funds", "right", "Funds buying (opened or added ≥10%) minus funds selling (trimmed ≥10% or exited)")}
               {head("tier_net", "Tier-wtd", "right", "Same count, each fund weighted by tier: S 1.5 · A 1.2 · B 1.0 · C 0.7")}
-              {head("conviction_sum", "Conviction", "right", "Share of each buying fund's 13F book in this stock: Σ over buyers (largest single bet below)")}
+              {head("conviction_max", "Biggest bet", "right", "The buying fund with the most of its 13F book in this stock, and how much")}
               {head("streak", "Streak", "right", "Filings in a row, newest first, where more counted funds bought than sold")}
               {head("insiders", "Insiders", "right", "Distinct insiders buying in the open market, last 30 days")}
               {head("activist", "Activist", "left", "Initial 13D from a tracked filer, last 90 days")}
@@ -408,14 +398,12 @@ function StockRow({ r, showIndustry, watched }: { r: FlowRow; showIndustry: bool
       </TableCell>
       <TableCell className="text-right"><Signed value={r.tier_net} decimals={1} /></TableCell>
       <TableCell className="text-right">
-        {r.conviction_sum === null ? (
+        {r.conviction_max === null ? (
           <span className="text-muted-foreground/60">—</span>
         ) : (
           <div className="flex flex-col leading-tight tabular-nums">
-            <span>Σ {fmtPct(r.conviction_sum)}</span>
-            <span className="text-[11px] text-muted-foreground">
-              max {fmtPct(r.conviction_max)} · {filerShortLabel(r.conviction_max_filer)}
-            </span>
+            <span>{fmtPct(r.conviction_max)}</span>
+            <span className="text-[11px] text-muted-foreground">{filerShortLabel(r.conviction_max_filer)}</span>
           </div>
         )}
       </TableCell>
