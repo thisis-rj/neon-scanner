@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Pct, TierBadge } from "@/components/app/cells";
+import { Pct, TierBadge, type Tier } from "@/components/app/cells";
 import { daysAgo, fmtInr, fmtQty, fmtShares, fmtUsd, fmtUsdExact, shortDate } from "@/lib/format";
 
 type Analysis = Awaited<ReturnType<typeof getStockAnalysis>>;
@@ -261,12 +261,22 @@ export type PocketCash = { deposited: number; withdrawn: number; net: number };
 
 export type InsiderTrade = { name: string; role: string | null; date: string; amount: number | null };
 
+export type FundMove = {
+  fund: string;
+  tier: string | null;
+  event: string; // opened | added | trimmed | exited
+  sharesPrev: number | null;
+  sharesNow: number | null;
+  moveUsd: number | null; // |shares change| × today's price
+};
+
 export type StockSignals = {
   insiderBuys: InsiderTrade[]; // newest first, last 90 days
   insiderSells: InsiderTrade[];
   fundAdded: number;
   fundTrimmed: number;
   fundPeriod: string | null;
+  fundMoves: FundMove[]; // latest quarter, buyers (opened/added) + sellers (trimmed/exited)
   activist: { subtype: string; filer: string; date: string } | null;
 };
 
@@ -650,6 +660,50 @@ function InsiderList({ kind, trades }: { kind: "buy" | "sell"; trades: InsiderTr
   );
 }
 
+const FUND_ORDER: Record<string, number> = { opened: 0, added: 1, trimmed: 2, exited: 3 };
+const FUND_LABEL: Record<string, string> = { opened: "New buy", added: "Bought more", trimmed: "Sold some", exited: "Sold all" };
+
+function FundList({ moves }: { moves: FundMove[] }) {
+  const rows = [...moves].sort(
+    (a, b) => FUND_ORDER[a.event] - FUND_ORDER[b.event] || (b.moveUsd ?? 0) - (a.moveUsd ?? 0),
+  );
+  return (
+    <Table className="text-xs">
+      <TableHeader>
+        <TableRow>
+          <TableHead>Fund</TableHead>
+          <TableHead>Tier</TableHead>
+          <TableHead>What they did</TableHead>
+          <TableHead className="text-right">Shares before → after</TableHead>
+          <TableHead className="text-right">Change</TableHead>
+          <TableHead className="text-right">$ bought / sold (today&apos;s price)</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((m, i) => {
+          const buy = m.event === "opened" || m.event === "added";
+          const chg =
+            m.sharesPrev && m.sharesNow != null ? (m.sharesNow - m.sharesPrev) / m.sharesPrev : null;
+          return (
+            <TableRow key={i}>
+              <TableCell className="font-medium">{m.fund}</TableCell>
+              <TableCell>{m.tier && ["S", "A", "B", "C"].includes(m.tier) ? <TierBadge tier={m.tier as Tier} /> : "—"}</TableCell>
+              <TableCell className={buy ? "text-positive" : "text-negative"}>{FUND_LABEL[m.event] ?? m.event}</TableCell>
+              <TableCell className="text-right tabular-nums text-muted-foreground">
+                {m.sharesPrev ? fmtShares(m.sharesPrev) : "0"} → {m.sharesNow ? fmtShares(m.sharesNow) : "0"}
+              </TableCell>
+              <TableCell className={cn("text-right tabular-nums", buy ? "text-positive" : "text-negative")}>
+                {m.event === "opened" ? "new" : m.event === "exited" ? "−100%" : chg == null ? "—" : `${chg > 0 ? "+" : ""}${(chg * 100).toFixed(0)}%`}
+              </TableCell>
+              <TableCell className={cn("text-right tabular-nums", buy ? "text-positive" : "text-negative")}>{m.moveUsd == null ? "—" : fmtUsd(m.moveUsd)}</TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
 function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockSignals }[] }) {
   // Which pill is open: "TSM|buy", "META|sell", …
   const [open, setOpen] = useState<string | null>(null);
@@ -662,7 +716,7 @@ function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockS
           Signals on your stocks
         </CardTitle>
         <CardAction className="text-[11px] text-muted-foreground">
-          click an insider pill for who · insider + activist = last 90 days · 13F = latest quarter, 45-day delayed
+          click a pill for who · insider + activist = last 90 days · 13F = latest quarter, 45-day delayed
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col divide-y divide-border">
@@ -690,12 +744,15 @@ function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockS
                 </button>
               )}
               {(s.fundAdded > 0 || s.fundTrimmed > 0) && (
-                <span className="text-muted-foreground">
-                  funds <span className="text-positive">+{s.fundAdded}</span>
-                  <span className="mx-0.5">/</span>
-                  <span className="text-negative">−{s.fundTrimmed}</span>
-                  {s.fundPeriod ? ` (${s.fundPeriod.slice(0, 7)})` : ""}
-                </span>
+                <button type="button" onClick={() => toggle(`${ticker}|fund`)}>
+                  <Badge variant="outline" className="cursor-pointer font-normal text-muted-foreground">
+                    funds <span className="text-positive">+{s.fundAdded}</span>
+                    <span className="mx-0.5">/</span>
+                    <span className="text-negative">−{s.fundTrimmed}</span>
+                    {s.fundPeriod ? ` (${s.fundPeriod.slice(0, 7)})` : ""}
+                    <ChevronRightIcon className={cn("size-3 transition-transform", open === `${ticker}|fund` && "rotate-90")} />
+                  </Badge>
+                </button>
               )}
               {s.activist && (
                 <Badge variant="warning" className="font-normal">
@@ -705,6 +762,7 @@ function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockS
             </div>
             {open === `${ticker}|buy` && <InsiderList kind="buy" trades={s.insiderBuys} />}
             {open === `${ticker}|sell` && <InsiderList kind="sell" trades={s.insiderSells} />}
+            {open === `${ticker}|fund` && <FundList moves={s.fundMoves} />}
           </div>
         ))}
       </CardContent>

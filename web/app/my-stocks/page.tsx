@@ -176,6 +176,7 @@ async function loadData(): Promise<{
       fundAdded: 0,
       fundTrimmed: 0,
       fundPeriod: null,
+      fundMoves: [],
       activist: null,
     });
   if (heldTickers.length) {
@@ -273,9 +274,11 @@ async function loadData(): Promise<{
     // Latest-quarter 13F fund moves (vs the fund's previous filing = lag 1).
     const { data: fc } = await sb
       .from("fund_position_changes")
-      .select("ticker,event,period,lag_quarters")
+      .select("ticker,event,period,lag_quarters,filer_name,tier,shares_prev,shares_cur")
       .in("ticker", heldTickers)
       .eq("lag_quarters", 1);
+    const priceOf = new Map<string, number>();
+    for (const h of holdings) if (h.current_price != null) priceOf.set(h.ticker, h.current_price);
     let maxPeriod: string | null = null;
     for (const r of fc ?? []) if (!maxPeriod || String(r.period) > maxPeriod) maxPeriod = String(r.period);
     for (const r of fc ?? []) {
@@ -285,6 +288,21 @@ async function loadData(): Promise<{
       const e = String(r.event);
       if (e === "opened" || e === "added") s.fundAdded++;
       else if (e === "trimmed" || e === "exited") s.fundTrimmed++;
+      else continue;
+      s.fundMoves.push({
+        fund: String(r.filer_name),
+        tier: r.tier == null ? null : String(r.tier),
+        event: e,
+        sharesPrev: r.shares_prev == null ? null : Number(r.shares_prev),
+        sharesNow: r.shares_cur == null ? null : Number(r.shares_cur),
+        // Size of the move at today's price — 13F value_usd is sometimes filed in $K
+        // and is the remaining position, not the trade, so it isn't used here.
+        // (exited rows have shares_cur null = 0 shares now)
+        moveUsd:
+          priceOf.get(String(r.ticker)) == null
+            ? null
+            : Math.abs(Number(r.shares_cur ?? 0) - Number(r.shares_prev ?? 0)) * priceOf.get(String(r.ticker))!,
+      });
     }
   }
 
