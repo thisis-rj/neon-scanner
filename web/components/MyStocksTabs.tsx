@@ -676,7 +676,7 @@ function FundList({ moves }: { moves: FundMove[] }) {
           <TableHead>What they did</TableHead>
           <TableHead className="text-right">Shares before → after</TableHead>
           <TableHead className="text-right">Change</TableHead>
-          <TableHead className="text-right">$ bought / sold (today&apos;s price)</TableHead>
+          <TableHead className="text-right" title="Shares bought or sold × today's share price">Approx. $ bought / sold</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
