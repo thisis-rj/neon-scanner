@@ -101,36 +101,47 @@ async function fetchHoldings(): Promise<{
   // function timeout — the page returned 0 bytes and users saw stale browser
   // cache. The RPC pushes the per-filer period-ranking into Postgres and
   // returns ~25K rows instead of 147K.
+  // PostgREST caps every response at 1000 rows AND re-executes holdings_recent()
+  // for each page, so fetching ~25 pages sequentially cost 20-60s per request
+  // (the page felt dead on every click). Fetch the pages in bounded-parallel
+  // batches instead: same rows, a handful of round-trips wide instead of 25 deep.
+  type RpcRow = {
+    cik: string; period_of_report: string; cusip: string; ticker: string | null;
+    issuer_name: string | null; shares: number | null; value_usd: number | null;
+    put_call: string | null; filer_name: string | null; filed_at: string;
+  };
   const out: Holding[] = [];
-  let from = 0;
-  const page = 1000;
-  while (true) {
-    const { data, error } = await sb
-      .rpc("holdings_recent", { max_periods: 2 })
-      .range(from, from + page - 1);
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-    for (const r of data as Array<{
-      cik: string; period_of_report: string; cusip: string; ticker: string | null;
-      issuer_name: string | null; shares: number | null; value_usd: number | null;
-      put_call: string | null; filer_name: string | null; filed_at: string;
-    }>) {
-      out.push({
-        cik: r.cik,
-        filer_name: r.filer_name ?? null,
-        period_of_report: r.period_of_report,
-        filed_at: r.filed_at ?? "",
-        cusip: r.cusip,
-        ticker: r.ticker,
-        issuer_name: r.issuer_name,
-        shares: r.shares,
-        value_usd: r.value_usd,
-        put_call: r.put_call ?? null,
-      });
+  const PAGE = 1000;
+  const MAX_PAGES = 40;   // ~40K rows of headroom; the RPC returns ~25K
+  const CONCURRENCY = 8;
+  let exhausted = false;
+  for (let start = 0; start < MAX_PAGES && !exhausted; start += CONCURRENCY) {
+    const width = Math.min(CONCURRENCY, MAX_PAGES - start);
+    const batch = await Promise.all(
+      Array.from({ length: width }, (_, i) => {
+        const offset = (start + i) * PAGE;
+        return sb.rpc("holdings_recent", { max_periods: 2 }).range(offset, offset + PAGE - 1);
+      }),
+    );
+    for (const { data, error } of batch) {
+      if (error) throw error;
+      const rows = (data ?? []) as RpcRow[];
+      if (rows.length < PAGE) exhausted = true;   // short page => nothing beyond it
+      for (const r of rows) {
+        out.push({
+          cik: r.cik,
+          filer_name: r.filer_name ?? null,
+          period_of_report: r.period_of_report,
+          filed_at: r.filed_at ?? "",
+          cusip: r.cusip,
+          ticker: r.ticker,
+          issuer_name: r.issuer_name,
+          shares: r.shares,
+          value_usd: r.value_usd,
+          put_call: r.put_call ?? null,
+        });
+      }
     }
-    if (data.length < page) break;
-    from += page;
-    if (from > 60000) break; // safety cap. RPC returns ~25K rows (2 periods × all filers); 60K is generous headroom.
   }
 
   // holdings_recent() reads holdings_13f_effective (migration 023), which
@@ -157,7 +168,25 @@ async function fetchHoldings(): Promise<{
   // already excluded by the view. Aggregating by
   // issuer collapses cases where one issuer has multiple CUSIPs (e.g.
   // Chesapeake legacy CUSIP + post-merger Expand Energy CUSIP).
-  function aggregateByIssuer(positions: Holding[]): Holding[] {
+  // 13F value normalization: SEC's pre-2024 instruction was "value in thousands",
+// post-2024 is "value in dollars". Filers transitioned at different times and a
+// filer can even switch between quarters, so detect and scale PER PERIOD.
+// Detection: if the median implied per-share price (value/shares) across the
+// largest positions is suspiciously low (<$5), the values are in thousands.
+function normalizeValueScale(positions: Holding[]): void {
+  const marks = [...positions]
+    .sort((a, b) => (b.value_usd ?? 0) - (a.value_usd ?? 0))
+    .slice(0, 10)
+    .map((p) => (p.value_usd && p.shares ? p.value_usd / p.shares : null))
+    .filter((m): m is number => m != null && m > 0)
+    .sort((a, b) => a - b);
+  const medianMark = marks.length ? marks[Math.floor(marks.length / 2)] : null;
+  if (medianMark != null && medianMark < 5) {
+    for (const p of positions) if (p.value_usd != null) p.value_usd *= 1000;
+  }
+}
+
+function aggregateByIssuer(positions: Holding[]): Holding[] {
     const m = new Map<string, Holding>();
     for (const p of positions) {
       const key = normIssuer(p.issuer_name);
@@ -181,6 +210,10 @@ async function fetchHoldings(): Promise<{
     const meta = filerMeta.get(cik)!;
     const latestAgg = aggregateByIssuer(periods.get(latest)!);
     const priorAgg = prior ? aggregateByIssuer(periods.get(prior)!) : [];
+    // Normalize thousands-vs-dollars PER PERIOD *before* deriving diffs, so
+    // exits (built from the prior quarter) are on the same scale as holdings.
+    normalizeValueScale(latestAgg);
+    normalizeValueScale(priorAgg);
     const priorByIssuer = new Map(priorAgg.map((p) => [normIssuer(p.issuer_name), p]));
     const latestIssuers = new Set(latestAgg.map((p) => normIssuer(p.issuer_name)));
 
@@ -229,27 +262,10 @@ async function fetchHoldings(): Promise<{
     });
   }
   // Compute totals across all positions in the latest quarter, THEN trim to top 10.
-  //
-  // 13F value normalization: SEC's pre-2024 instruction was "value in thousands",
-  // post-2024 is "value in dollars". Different filers transitioned at different
-  // times and some still use the old scale. Detection heuristic: if the median
-  // implied per-share price (value/shares) across the filer's top positions is
-  // suspiciously low (<$5), the value field is in thousands — multiply by 1000.
+  // Value scale is normalized per period up in the diff loop (normalizeValueScale),
+  // so exits from the prior quarter are on the same scale as current holdings.
   for (const f of byFiler.values()) {
     f.positions.sort((a, b) => (b.value_usd ?? 0) - (a.value_usd ?? 0));
-    const topForScale = f.positions.slice(0, 10);
-    const marks = topForScale
-      .map((p) => (p.value_usd && p.shares ? p.value_usd / p.shares : null))
-      .filter((m): m is number => m != null && m > 0)
-      .sort((a, b) => a - b);
-    const medianMark = marks.length ? marks[Math.floor(marks.length / 2)] : null;
-    const inThousands = medianMark != null && medianMark < 5;
-    const scale = inThousands ? 1000 : 1;
-    if (scale !== 1) {
-      for (const p of f.positions) {
-        if (p.value_usd != null) p.value_usd *= scale;
-      }
-    }
     f.totalValue = f.positions.reduce((sum, p) => sum + (p.value_usd ?? 0), 0);
     f.totalPositions = f.positions.length;
     f.positions = f.positions.slice(0, 10);
