@@ -259,7 +259,26 @@ export type SellLog = {
 
 export type PocketCash = { deposited: number; withdrawn: number; net: number };
 
-export type InsiderTrade = { name: string; role: string | null; date: string; amount: number | null };
+export type InsiderTrade = {
+  name: string;
+  role: string | null;
+  date: string;
+  amount: number | null;
+  planned: boolean | null; // Rule 10b5-1 pre-arranged plan (SEC checkbox); null = unknown
+  usualX: number | null; // sale $ ÷ median of the person's earlier sale days (sells only)
+  record: boolean; // bigger than any earlier sale day by this person in this stock
+};
+
+// Non-routine = the insider chose the timing: every open-market buy, any
+// unplanned sale, or (when the plan box is unknown) a sale 2x+ / record vs their
+// own history. Planned (10b5-1) sales stay routine even when large — their size
+// was fixed months earlier.
+function nonRoutine(t: InsiderTrade, kind: "buy" | "sell"): boolean {
+  if (kind === "buy") return true;
+  if (t.planned === false) return true;
+  if (t.planned === true) return false;
+  return t.record || (t.usualX != null && t.usualX >= 2);
+}
 
 export type FundMove = {
   fund: string;
@@ -634,6 +653,10 @@ function sigLatest(s: StockSignals): string {
 }
 
 function InsiderList({ kind, trades }: { kind: "buy" | "sell"; trades: InsiderTrade[] }) {
+  // Non-routine first (newest first within each group); routine planned sales greyed out.
+  const rows = [...trades].sort(
+    (x, y) => Number(nonRoutine(y, kind)) - Number(nonRoutine(x, kind)) || y.date.localeCompare(x.date),
+  );
   return (
     <Table className="text-xs">
       <TableHeader>
@@ -641,20 +664,57 @@ function InsiderList({ kind, trades }: { kind: "buy" | "sell"; trades: InsiderTr
           <TableHead>{kind === "buy" ? "Bought by" : "Sold by"}</TableHead>
           <TableHead>Role</TableHead>
           <TableHead>Date</TableHead>
+          <TableHead title="Planned = pre-arranged Rule 10b5-1 schedule (routine). Unplanned = the insider chose to trade now.">
+            Routine?
+          </TableHead>
+          {kind === "sell" && (
+            <TableHead className="text-right" title="This sale vs the median of this person's earlier sale days in this stock (2023+)">
+              vs their usual
+            </TableHead>
+          )}
           <TableHead className="text-right">Amount</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {trades.map((t, i) => (
-          <TableRow key={i}>
-            <TableCell className="font-medium">{t.name}</TableCell>
-            <TableCell className="text-muted-foreground">{t.role ?? "—"}</TableCell>
-            <TableCell className="tabular-nums text-muted-foreground">{shortDate(t.date)}</TableCell>
-            <TableCell className={cn("text-right tabular-nums", kind === "buy" ? "text-positive" : "text-negative")}>
-              {t.amount == null ? "—" : fmtUsd(t.amount)}
-            </TableCell>
-          </TableRow>
-        ))}
+        {rows.map((t, i) => {
+          const flag = nonRoutine(t, kind);
+          return (
+            <TableRow key={i} className={cn(!flag && "opacity-50")}>
+              <TableCell className="font-medium">{t.name}</TableCell>
+              <TableCell className="text-muted-foreground">{t.role ?? "—"}</TableCell>
+              <TableCell className="tabular-nums text-muted-foreground">{shortDate(t.date)}</TableCell>
+              <TableCell>
+                {kind === "buy" ? (
+                  <Badge variant="positive" className="font-normal">
+                    {t.planned ? "Planned buy" : "Own-money buy"}
+                  </Badge>
+                ) : t.planned === true ? (
+                  <span className="text-muted-foreground">Planned</span>
+                ) : t.planned === false ? (
+                  <Badge variant="negative" className="font-normal">Unplanned</Badge>
+                ) : (
+                  <span className="text-muted-foreground">Unknown</span>
+                )}
+              </TableCell>
+              {kind === "sell" && (
+                <TableCell className="text-right tabular-nums">
+                  {t.record ? (
+                    <Badge variant="negative" className="font-normal">Record</Badge>
+                  ) : t.usualX == null ? (
+                    <span className="text-muted-foreground">—</span>
+                  ) : (
+                    <span className={cn(t.usualX >= 2 ? "font-medium text-negative" : "text-muted-foreground")}>
+                      {t.usualX.toFixed(1)}×
+                    </span>
+                  )}
+                </TableCell>
+              )}
+              <TableCell className={cn("text-right tabular-nums", kind === "buy" ? "text-positive" : "text-negative")}>
+                {t.amount == null ? "—" : fmtUsd(t.amount)}
+              </TableCell>
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
   );
@@ -730,7 +790,12 @@ function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockS
               {s.insiderSells.length > 0 && (
                 <button type="button" onClick={() => toggle(`${ticker}|sell`)}>
                   <Badge variant="negative" className="cursor-pointer font-normal">
-                    ▼ {s.insiderSells.length} insider sell{s.insiderSells.length > 1 ? "s" : ""} · {daysAgo(s.insiderSells[0].date)}
+                    ▼ {s.insiderSells.length} insider sell{s.insiderSells.length > 1 ? "s" : ""}
+                    {(() => {
+                      const n = s.insiderSells.filter((t) => nonRoutine(t, "sell")).length;
+                      return n ? ` (${n} non-routine)` : " (all routine)";
+                    })()}{" "}
+                    · {daysAgo(s.insiderSells[0].date)}
                     <ChevronRightIcon className={cn("size-3 transition-transform", open === `${ticker}|sell` && "rotate-90")} />
                   </Badge>
                 </button>

@@ -149,6 +149,16 @@ def parse_form4(xml_bytes: bytes) -> list[dict[str, Any]]:
 
     # Issuer (one)
     issuer_elem = next((c for c in root if _localname(c.tag) == "issuer"), None)
+
+    # Rule 10b5-1 (pre-arranged plan) flag. Forms filed since Apr 2023 carry a
+    # document-level <aff10b5One> checkbox; older forms only mention plans in
+    # footnotes. None = can't tell.
+    box = _text_of(root, "aff10b5One")
+    if box is not None:
+        is_plan: bool | None = box.strip().lower() in ("1", "true")
+    else:
+        notes = " ".join((e.text or "") for e in root.iter() if _localname(e.tag) == "footnote")
+        is_plan = True if re.search(r"10b5-1", notes, re.I) and not re.search(r"not\s+(?:made\s+)?pursuant\s+to\s+a?\s*(?:Rule\s+)?10b5-1", notes, re.I) else None
     issuer_cik = _text_of(issuer_elem, "issuerCik")
     issuer_name = _text_of(issuer_elem, "issuerName")
     ticker = _text_of(issuer_elem, "issuerTradingSymbol")
@@ -201,6 +211,7 @@ def parse_form4(xml_bytes: bytes) -> list[dict[str, Any]]:
                 "is_director": primary_owner["is_director"],
                 "is_officer": primary_owner["is_officer"],
                 "is_ten_pct": primary_owner["is_ten_pct"],
+                "is_10b5_1": is_plan,
                 "issuer_cik": (issuer_cik or "").zfill(10) if issuer_cik else None,
                 "issuer_name": issuer_name,
                 "ticker": ticker,

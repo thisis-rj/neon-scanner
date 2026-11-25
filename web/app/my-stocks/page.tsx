@@ -194,7 +194,7 @@ async function loadData(): Promise<{
     // Insider BUYS (open-market, code P) — insider_transactions carries role + $ value.
     const { data: ib } = await sb
       .from("insider_transactions")
-      .select("issuer_ticker,reporter_cik,reporter_name,officer_title,reporter_is_director,reporter_is_officer,reporter_is_ten_pct,transaction_date,shares,price,value_usd")
+      .select("issuer_ticker,reporter_cik,reporter_name,officer_title,reporter_is_director,reporter_is_officer,reporter_is_ten_pct,transaction_date,shares,price,value_usd,is_10b5_1")
       .in("issuer_ticker", heldTickers)
       .eq("transaction_code", "P")
       .gte("transaction_date", since)
@@ -207,18 +207,23 @@ async function loadData(): Promise<{
         role: roleOf(r),
         date: String(r.transaction_date),
         amount: r.value_usd != null ? Number(r.value_usd) : shares != null && price != null ? shares * price : null,
+        planned: r.is_10b5_1 == null ? null : Boolean(r.is_10b5_1),
+        usualX: null,
+        record: false,
       });
     }
 
     // Insider SELLS (code S) live in events_form4 (role columns from migration 037).
     const { data: isl } = await sb
       .from("events_form4")
-      .select("ticker,reporter_name,officer_title,is_director,is_officer,is_ten_pct,transaction_date,shares,price")
+      .select("ticker,reporter_cik,reporter_name,officer_title,is_director,is_officer,is_ten_pct,is_10b5_1,transaction_date,shares,price")
       .in("ticker", heldTickers)
       .eq("transaction_code", "S")
       .gte("transaction_date", since)
       .order("transaction_date", { ascending: false });
+    const sellerCik = new Map<string, string>(); // "name|ticker" -> reporter_cik (for size history)
     for (const r of isl ?? []) {
+      sellerCik.set(`${r.reporter_name}|${r.ticker}`, String(r.reporter_cik));
       const shares = r.shares == null ? null : Number(r.shares);
       const price = r.price == null ? null : Number(r.price);
       sig(String(r.ticker)).insiderSells.push({
@@ -231,6 +236,9 @@ async function loadData(): Promise<{
         }),
         date: String(r.transaction_date),
         amount: shares != null && price != null ? shares * price : null,
+        planned: r.is_10b5_1 == null ? null : Boolean(r.is_10b5_1),
+        usualX: null,
+        record: false,
       });
     }
 
@@ -244,6 +252,8 @@ async function loadData(): Promise<{
         else {
           cur.amount = cur.amount == null || t.amount == null ? (cur.amount ?? t.amount) : cur.amount + t.amount;
           cur.role ??= t.role;
+          // any unplanned chunk makes the day unplanned
+          cur.planned = cur.planned === false || t.planned === false ? false : (cur.planned ?? t.planned);
         }
       }
       return [...m.values()].sort((a, b) => b.date.localeCompare(a.date) || (b.amount ?? 0) - (a.amount ?? 0));
@@ -251,6 +261,46 @@ async function loadData(): Promise<{
     for (const s of Object.values(signals)) {
       s.insiderBuys = merge(s.insiderBuys);
       s.insiderSells = merge(s.insiderSells);
+    }
+
+    // Size vs the seller's own history: each sale day's $ against the median and
+    // max of that person's earlier sale days in the same stock (events_form4, 2023+).
+    const ciks = [...new Set(sellerCik.values())];
+    if (ciks.length) {
+      const hist: { ticker: string; reporter_cik: string; transaction_date: string; shares: number | null; price: number | null }[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data } = await sb
+          .from("events_form4")
+          .select("ticker,reporter_cik,transaction_date,shares,price")
+          .in("reporter_cik", ciks)
+          .in("ticker", heldTickers)
+          .eq("transaction_code", "S")
+          .gte("transaction_date", "2023-01-01")
+          .order("id")
+          .range(from, from + 999);
+        hist.push(...((data ?? []) as typeof hist));
+        if (!data || data.length < 1000) break;
+      }
+      const days = new Map<string, Map<string, number>>(); // "cik|ticker" -> date -> $
+      for (const h of hist) {
+        if (h.shares == null || h.price == null) continue;
+        const k = `${h.reporter_cik}|${h.ticker}`;
+        if (!days.has(k)) days.set(k, new Map());
+        const d = days.get(k)!;
+        d.set(h.transaction_date, (d.get(h.transaction_date) ?? 0) + Number(h.shares) * Number(h.price));
+      }
+      for (const [ticker, s] of Object.entries(signals)) {
+        for (const t of s.insiderSells) {
+          const cik = sellerCik.get(`${t.name}|${ticker}`);
+          const d = cik ? days.get(`${cik}|${ticker}`) : undefined;
+          if (!d || t.amount == null) continue;
+          const prior = [...d.entries()].filter(([dt]) => dt < t.date).map(([, v]) => v).sort((a, b) => a - b);
+          if (prior.length < 3) continue; // too little history to call anything "usual"
+          const median = prior[Math.floor(prior.length / 2)];
+          t.usualX = median > 0 ? t.amount / median : null;
+          t.record = t.amount > prior[prior.length - 1];
+        }
+      }
     }
 
     const { data: a13 } = await sb
