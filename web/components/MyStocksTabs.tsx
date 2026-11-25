@@ -274,7 +274,7 @@ export type InsiderTrade = {
 // own history. Planned (10b5-1) sales stay routine even when large — their size
 // was fixed months earlier.
 function nonRoutine(t: InsiderTrade, kind: "buy" | "sell"): boolean {
-  if (kind === "buy") return true;
+  if (kind === "buy") return t.planned !== true;
   if (t.planned === false) return true;
   if (t.planned === true) return false;
   return t.record || (t.usualX != null && t.usualX >= 2);
@@ -684,17 +684,24 @@ function InsiderList({ kind, trades }: { kind: "buy" | "sell"; trades: InsiderTr
               <TableCell className="text-muted-foreground">{t.role ?? "—"}</TableCell>
               <TableCell className="tabular-nums text-muted-foreground">{shortDate(t.date)}</TableCell>
               <TableCell>
-                {kind === "buy" ? (
-                  <Badge variant="positive" className="font-normal">
-                    {t.planned ? "Planned buy" : "Own-money buy"}
+                {flag ? (
+                  <Badge variant={kind === "buy" ? "positive" : "negative"} className="font-normal">
+                    Non-routine
                   </Badge>
-                ) : t.planned === true ? (
-                  <span className="text-muted-foreground">Planned</span>
-                ) : t.planned === false ? (
-                  <Badge variant="negative" className="font-normal">Unplanned</Badge>
                 ) : (
-                  <span className="text-muted-foreground">Unknown</span>
+                  <span className="text-muted-foreground">Routine</span>
                 )}
+                <span className="ml-1.5 text-[11px] text-muted-foreground">
+                  {kind === "buy"
+                    ? t.planned
+                      ? "pre-planned buy"
+                      : "chose to buy"
+                    : t.planned === true
+                      ? "pre-planned sale"
+                      : t.planned === false
+                        ? "chose to sell"
+                        : "plan unknown"}
+                </span>
               </TableCell>
               {kind === "sell" && (
                 <TableCell className="text-right tabular-nums">
