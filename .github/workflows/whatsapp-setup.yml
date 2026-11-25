@@ -10,7 +10,7 @@ on:
         required: true
         default: status
         type: choice
-        options: [status, set_pin, register]
+        options: [status, set_pin, register, oba_status]
 
 env:
   GRAPH: https://graph.facebook.com/v21.0
@@ -55,3 +55,11 @@ jobs:
           [ ${#PIN} -eq 6 ] || { echo "WHATSAPP_PIN must be exactly 6 digits"; exit 1; }
           curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
             -d "{\"messaging_product\":\"whatsapp\",\"pin\":\"$PIN\"}" "$GRAPH/$PHONE_NUMBER_ID/register" | python3 -m json.tool
+
+      - name: Official business account (badge) status
+        if: ${{ inputs.action == 'oba_status' }}
+        env:
+          TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+        run: |
+          curl -sS -H "Authorization: Bearer $TOKEN" "$GRAPH/$PHONE_NUMBER_ID/official_business_account" | python3 -m json.tool
+          curl -sS -H "Authorization: Bearer $TOKEN" "$GRAPH/$PHONE_NUMBER_ID?fields=official_business_account,is_official_business_account,throughput,messaging_limit_tier,eligibility_for_api_business_global_search" | python3 -m json.tool
