@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "status = show number status; set_pin = turn on two-step verification with WHATSAPP_PIN"
+        description: "status = show number status; set_pin = two-step PIN via settings call; register = (re)register the number with WHATSAPP_PIN as its two-step PIN"
         required: true
         default: status
         type: choice
-        options: [status, set_pin]
+        options: [status, set_pin, register]
 
 env:
   GRAPH: https://graph.facebook.com/v21.0
@@ -45,3 +45,13 @@ jobs:
           [ ${#PIN} -eq 6 ] || { echo "WHATSAPP_PIN must be exactly 6 digits"; exit 1; }
           curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
             -d "{\"pin\":\"$PIN\"}" "$GRAPH/$PHONE_NUMBER_ID" | python3 -m json.tool
+
+      - name: Register number with two-step PIN
+        if: ${{ inputs.action == 'register' }}
+        env:
+          TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          PIN: ${{ secrets.WHATSAPP_PIN }}
+        run: |
+          [ ${#PIN} -eq 6 ] || { echo "WHATSAPP_PIN must be exactly 6 digits"; exit 1; }
+          curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d "{\"messaging_product\":\"whatsapp\",\"pin\":\"$PIN\"}" "$GRAPH/$PHONE_NUMBER_ID/register" | python3 -m json.tool
