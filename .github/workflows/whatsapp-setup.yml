@@ -21,6 +21,13 @@ jobs:
   run:
     runs-on: ubuntu-latest
     steps:
+      - name: Token check (type, expiry, permissions — never the token itself)
+        env:
+          TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+        run: |
+          curl -sS "$GRAPH/debug_token?input_token=$TOKEN&access_token=$TOKEN" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin).get('data',{}); print(json.dumps({k:d.get(k) for k in ('type','application','is_valid','expires_at','scopes')},indent=2))"
+
       - name: Number status
         env:
           TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
