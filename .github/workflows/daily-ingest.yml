@@ -78,6 +78,12 @@ jobs:
         run: python -m ingest.mag7
         continue-on-error: true
 
+      - name: Sector overlay prices (/sectors — 12 symbols, a few seconds)
+        # Bitcoin, gold, silver + sector ETFs; last month upserted daily, 5y
+        # backfill only for a symbol added to SYMBOLS for the first time.
+        run: python -m ingest.sector_prices
+        continue-on-error: true
+
       - name: Refresh My Stocks prices + USD/INR (personal portfolio)
         # Updates portfolio_positions.current_price and fx_rates (USDINR) for the
         # /my-stocks live P&L + ₹ pocket-return band. DB-driven (--prices reads

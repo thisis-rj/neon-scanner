@@ -2,6 +2,14 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-11-27 — /sectors: Bitcoin, metals and sector funds on one chart
+
+Author: Riya (with Claude).
+
+- New page **/sectors** (in the nav): 12 switchable lines (Bitcoin, gold, silver, semiconductors SMH, defense ITA, utilities XLU, uranium URA, energy XLE, financials XLF, healthcare XLV, software IGV, Bitcoin miners WGMI), indexed to % change from the first day of the chosen range (1M–5Y); hover shows the dollar price; table with latest price, change and worst fall. US trading-day calendar (Bitcoin/futures carried forward).
+- Data: migration **`040`** (`sector_prices`), `python -m ingest.sector_prices` (new step in the yahoo job; backfills 5y only for a new symbol). Line list lives in `web/lib/sectors.ts` — keep `SYMBOLS` in the ingest in sync.
+- Colors: `--chart-4..8` added from the same validated palette; only /sectors uses them (lines 9–12 dashed). Noted in `web/AGENTS.md`.
+
 ## 2026-10-07 — /earnings-test concluded; data frozen
 
 Author: Vijay (with Claude). Branch `feat/earnings-test`.
