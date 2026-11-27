@@ -10,7 +10,7 @@ on:
         required: true
         default: status
         type: choice
-        options: [status, set_pin, register, oba_status]
+        options: [status, set_pin, register, oba_status, send_test, create_template, template_status]
 
 env:
   GRAPH: https://graph.facebook.com/v21.0
@@ -63,3 +63,46 @@ jobs:
         run: |
           curl -sS -H "Authorization: Bearer $TOKEN" "$GRAPH/$PHONE_NUMBER_ID/official_business_account" | python3 -m json.tool
           curl -sS -H "Authorization: Bearer $TOKEN" "$GRAPH/$PHONE_NUMBER_ID?fields=official_business_account,is_official_business_account,throughput,messaging_limit_tier,eligibility_for_api_business_global_search" | python3 -m json.tool
+
+      - name: Send test message (Meta's pre-approved hello_world template)
+        if: ${{ inputs.action == 'send_test' }}
+        env:
+          TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          TO: ${{ secrets.WHATSAPP_TO_RIYA }}
+        run: |
+          curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d "{\"messaging_product\":\"whatsapp\",\"to\":\"$TO\",\"type\":\"template\",\"template\":{\"name\":\"hello_world\",\"language\":{\"code\":\"en_US\"}}}" \
+            "$GRAPH/$PHONE_NUMBER_ID/messages" | python3 -c "import json,sys; d=json.load(sys.stdin); print(json.dumps({'ok': 'messages' in d, 'error': d.get('error',{}).get('message')}, indent=2))"
+
+      - name: Submit the daily-report template to Meta
+        if: ${{ inputs.action == 'create_template' }}
+        env:
+          TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+        run: |
+          cat > /tmp/tpl.json <<'JSON'
+          {
+            "name": "neon_daily_report",
+            "language": "en",
+            "category": "UTILITY",
+            "components": [
+              {"type": "HEADER", "format": "TEXT", "text": "Neon daily report: {{1}}", "example": {"header_text": ["27 Nov"]}},
+              {"type": "BODY",
+               "text": "Market: {{1}}\nInsider (non-routine): {{2}}\nShort sellers: {{3}}\nRatings: {{4}}\nEarnings: {{5}}",
+               "example": {"body_text": [["Nasdaq -1.2%, Bitcoin -3%, gold +0.4%", "NVDA director sold $300M (unplanned)", "None on your stocks", "INSM downgraded by William Blair", "NVDA reports 19 Nov"]]}},
+              {"type": "BUTTONS", "buttons": [
+                {"type": "URL", "text": "Open full report",
+                 "url": "https://neon-scanner-riya1910jain-2522s-projects.vercel.app/report/{{1}}",
+                 "example": ["2026-11-27"]}
+              ]}
+            ]
+          }
+          JSON
+          curl -sS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d @/tmp/tpl.json "$GRAPH/$WABA_ID/message_templates" | python3 -m json.tool
+
+      - name: Template approval status
+        if: ${{ inputs.action == 'template_status' }}
+        env:
+          TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+        run: |
+          curl -sS -H "Authorization: Bearer $TOKEN" "$GRAPH/$WABA_ID/message_templates?name=neon_daily_report&fields=name,status,category,rejected_reason" | python3 -m json.tool
