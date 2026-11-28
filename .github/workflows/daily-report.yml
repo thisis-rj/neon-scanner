@@ -15,7 +15,7 @@ on:
       template:
         description: "Instead of a report: submit the WhatsApp template to Meta, or check its approval"
         type: choice
-        options: [none, submit, status]
+        options: [none, submit, status, inbox_scan]
         default: none
 
 env:
@@ -26,6 +26,8 @@ env:
   WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
   WHATSAPP_TO_RIYA: ${{ secrets.WHATSAPP_TO_RIYA }}
   WHATSAPP_TO_VIJAY: ${{ secrets.WHATSAPP_TO_VIJAY }}   # unset = Vijay's report is built but not sent
+  GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}            # newsletter inbox (ingest/newsletters.py)
+  GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
 
 jobs:
   report:
@@ -39,8 +41,11 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements.txt
       - run: pip install -r requirements.txt
+      - name: Newsletter inbox scan (senders only, results to DB — logs are public)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.template == 'inbox_scan' }}
+        run: python -m ingest.newsletters --scan
       - name: WhatsApp template admin
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.template != 'none' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && (inputs.template == 'submit' || inputs.template == 'status') }}
         run: python -m ingest.daily_report --template ${{ inputs.template }}
       - name: Analyst rating changes for held stocks (~25 tickers)
         if: ${{ github.event_name == 'schedule' || inputs.template == 'none' }}
