@@ -297,7 +297,10 @@ export type StockSignals = {
   fundPeriod: string | null;
   fundMoves: FundMove[]; // latest quarter, buyers (opened/added) + sellers (trimmed/exited)
   activist: { subtype: string; filer: string; date: string } | null;
+  shorts: ShortItem[]; // short-seller news, last 90 days, newest first (short_seller_news)
 };
+
+export type ShortItem = { url: string; title: string; source: string | null; published: string; kind: "report" | "commentary"; firms: string[] };
 
 const PEOPLE = ["Riya", "Vijay"] as const;
 type Person = (typeof PEOPLE)[number];
@@ -642,11 +645,12 @@ function sigHasActivity(s: StockSignals): boolean {
     s.insiderSells.length > 0 ||
     s.fundAdded > 0 ||
     s.fundTrimmed > 0 ||
-    !!s.activist
+    !!s.activist ||
+    s.shorts.length > 0
   );
 }
 function sigLatest(s: StockSignals): string {
-  return [s.insiderBuys[0]?.date ?? null, s.insiderSells[0]?.date ?? null, s.activist?.date ?? null]
+  return [s.insiderBuys[0]?.date ?? null, s.insiderSells[0]?.date ?? null, s.activist?.date ?? null, s.shorts[0]?.published ?? null]
     .filter(Boolean)
     .sort()
     .reverse()[0] as string ?? "";
@@ -771,6 +775,39 @@ function FundList({ moves }: { moves: FundMove[] }) {
   );
 }
 
+function ShortList({ items }: { items: ShortItem[] }) {
+  const rows = [...items].sort((a, b) => Number(b.kind === "report") - Number(a.kind === "report") || b.published.localeCompare(a.published));
+  return (
+    <Table className="text-xs">
+      <TableHeader>
+        <TableRow>
+          <TableHead>Headline</TableHead>
+          <TableHead>Type</TableHead>
+          <TableHead>Short seller</TableHead>
+          <TableHead className="text-right">Date</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((x) => (
+          <TableRow key={x.url} className={cn(x.kind !== "report" && "opacity-70")}>
+            <TableCell className="max-w-[28rem] whitespace-normal">
+              <a href={x.url} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">
+                {x.title}
+              </a>
+              {x.source && <span className="ml-1 text-muted-foreground">· {x.source}</span>}
+            </TableCell>
+            <TableCell>
+              {x.kind === "report" ? <Badge variant="negative" className="font-normal">Short report</Badge> : <span className="text-muted-foreground">Commentary</span>}
+            </TableCell>
+            <TableCell className="text-muted-foreground">{x.firms.length ? x.firms.join(", ") : "—"}</TableCell>
+            <TableCell className="text-right tabular-nums text-muted-foreground">{shortDate(x.published)}</TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
 function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockSignals }[] }) {
   // Which pill is open: "TSM|buy", "META|sell", …
   const [open, setOpen] = useState<string | null>(null);
@@ -783,7 +820,7 @@ function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockS
           Signals on your stocks
         </CardTitle>
         <CardAction className="text-[11px] text-muted-foreground">
-          click a pill for who · insider + activist = last 90 days · 13F = latest quarter, 45-day delayed
+          click a pill for who · insider, activist, short sellers = last 90 days · 13F = latest quarter, 45-day delayed
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col divide-y divide-border">
@@ -826,6 +863,20 @@ function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockS
                   </Badge>
                 </button>
               )}
+              {s.shorts.length > 0 && (() => {
+                const reports = s.shorts.filter((x) => x.kind === "report");
+                return (
+                  <button type="button" onClick={() => toggle(`${ticker}|short`)}>
+                    <Badge variant={reports.length ? "negative" : "outline"} className="cursor-pointer font-normal">
+                      🩳{" "}
+                      {reports.length
+                        ? `${reports.length} short report${reports.length > 1 ? "s" : ""} · ${daysAgo(reports[0].published)}`
+                        : `${s.shorts.length} short-seller article${s.shorts.length > 1 ? "s" : ""} · ${daysAgo(s.shorts[0].published)}`}
+                      <ChevronRightIcon className={cn("size-3 transition-transform", open === `${ticker}|short` && "rotate-90")} />
+                    </Badge>
+                  </button>
+                );
+              })()}
               {s.activist && (
                 <Badge variant="warning" className="font-normal">
                   {s.activist.subtype} · {s.activist.filer} · {daysAgo(s.activist.date)}
@@ -835,6 +886,7 @@ function SignalsCard({ rows }: { rows: { ticker: string; name: string; s: StockS
             {open === `${ticker}|buy` && <InsiderList kind="buy" trades={s.insiderBuys} />}
             {open === `${ticker}|sell` && <InsiderList kind="sell" trades={s.insiderSells} />}
             {open === `${ticker}|fund` && <FundList moves={s.fundMoves} />}
+            {open === `${ticker}|short` && <ShortList items={s.shorts} />}
           </div>
         ))}
       </CardContent>

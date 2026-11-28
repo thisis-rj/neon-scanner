@@ -178,6 +178,7 @@ async function loadData(): Promise<{
       fundPeriod: null,
       fundMoves: [],
       activist: null,
+      shorts: [],
     });
   if (heldTickers.length) {
     const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
@@ -319,6 +320,28 @@ async function loadData(): Promise<{
           date: String(r.event_date),
         };
       }
+    }
+
+    // Short-seller news (ingest/short_sellers.py; target checked by the AI model), one row per story.
+    const { data: shortRows } = await sb
+      .from("short_seller_news")
+      .select("url,ticker,title,source,published,kind,firms")
+      .in("ticker", heldTickers)
+      .gte("published", since)
+      .order("published", { ascending: false });
+    const seenStory = new Set<string>();
+    for (const r of shortRows ?? []) {
+      const k = `${r.ticker}|${String(r.title).toLowerCase()}`;
+      if (seenStory.has(k)) continue;
+      seenStory.add(k);
+      sig(String(r.ticker)).shorts.push({
+        url: String(r.url),
+        title: String(r.title),
+        source: r.source == null ? null : String(r.source),
+        published: String(r.published),
+        kind: r.kind === "report" ? "report" : "commentary",
+        firms: (r.firms as string[] | null) ?? [],
+      });
     }
 
     // Latest-quarter 13F fund moves (vs the fund's previous filing = lag 1).
