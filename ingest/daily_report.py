@@ -29,27 +29,30 @@ SITE = "https://neon-scanner-riya1910jain-2522s-projects.vercel.app"
 GRAPH = "https://graph.facebook.com/v21.0"
 PHONE_NUMBER_ID = "1047051355158686"   # +91 95890 61463 (not secret)
 WABA_ID = "956091127378728"
-TEMPLATE = "neon_daily_report_v3"
+TEMPLATE = "neon_daily_report_v4"
 # Template body (WhatsApp forbids line breaks inside a variable, so each market
 # line is its own variable). Submitted with --submit-template; params filled in send().
 TEMPLATE_BODY = (
     "📰 Company news: {{1}}\n\n"
+    "🗞️ Market takeaway (Short Squeez, Money Stuff): {{2}}\n\n"
     "📊 Market, last US trading day:\n"
-    "S&P 500: {{2}}\n"
-    "Nasdaq-100: {{3}}\n"
-    "Chip stocks: {{4}}\n"
-    "Bitcoin: {{5}}\n"
-    "Gold: {{6}}\n"
-    "US interest rate (10-yr, up is bad for stocks): {{7}}\n"
-    "Fear gauge (VIX, up is bad for stocks): {{8}}\n\n"
-    "🕵️ Non-routine insider trades: {{9}}\n\n"
-    "🩳 Short-seller reports: {{10}}\n\n"
-    "⭐ Analyst rating changes: {{11}}\n\n"
-    "📅 Upcoming earnings: {{12}}\n\n"
+    "S&P 500: {{3}}\n"
+    "Nasdaq-100: {{4}}\n"
+    "Chip stocks: {{5}}\n"
+    "Bitcoin: {{6}}\n"
+    "Gold: {{7}}\n"
+    "US interest rate (10-yr, up is bad for stocks): {{8}}\n"
+    "Fear gauge (VIX, up is bad for stocks): {{9}}\n\n"
+    "🕵️ Non-routine insider trades: {{10}}\n\n"
+    "🩳 Short-seller reports: {{11}}\n\n"
+    "⭐ Analyst rating changes: {{12}}\n\n"
+    "📅 Upcoming earnings: {{13}}\n\n"
     "Tap below for the full report with details and links."
 )
-PARAM_KEYS = ["news", "sp", "ndx", "chips", "btc", "gold", "rate", "vix", "insider", "shorts", "ratings", "earnings"]
-TEMPLATE_EXAMPLE = ["Sanofi is buying Insmed for $175 a share in cash", "🟢 up 1.6%", "🟢 up 2.7%", "🟢 up 4.2%",
+PARAM_KEYS = ["news", "takeaway", "sp", "ndx", "chips", "btc", "gold", "rate", "vix", "insider", "shorts", "ratings", "earnings"]
+TEMPLATE_EXAMPLE = ["Sanofi is buying Insmed for $175 a share in cash",
+                    "Chip stocks rebounded as Nvidia's CEO returned | Banks rallied on hopes of lighter capital rules",
+                    "🟢 up 1.6%", "🟢 up 2.7%", "🟢 up 4.2%",
                     "🟢 up 0.2%", "🔴 down 0.7%", "🟢 up 0.09 to 4.94%", "🔴 down 4.5 to 23.8 (nervous)",
                     "None on your stocks", "Not connected yet", "INSM 11 downgrades; NVDA 2 upgrades", "SNPS Tue 08 Dec"]
 FIXED_LEN = len(re.sub(r"\{\{\d+\}\}", "", TEMPLATE_BODY))
@@ -428,6 +431,7 @@ def summarize(content: dict) -> dict:
         ratings=clip(rat_txt, "No changes on your stocks"),
         earnings=clip([f"{e['ticker']} {datetime.fromisoformat(e['date']).strftime('%a %d %b')}" for e in ern], "None in the next 2 weeks"),
     )
+    out["takeaway"] = (content["market"].get("takeaway") or "No Short Squeez / Money Stuff since the last report")[:240]
     for r in content["market"]["rows"]:
         out[MARKET_KEYS[r["symbol"]]] = r["line"]
     for k in MARKET_KEYS.values():
@@ -523,6 +527,12 @@ def main() -> None:
     pos = sb.table("portfolio_positions").select("person,ticker").gt("qty", 0).execute().data or []
     people = sorted({r["person"] for r in pos if not a.person or r["person"] == a.person})
     market = market_section()
+    try:
+        from ingest.newsletters import market_takeaway
+        market["takeaway"] = market_takeaway(since)
+    except Exception as e:  # never block the report on the inbox
+        print(f"  takeaway skipped: {e}", flush=True)
+        market["takeaway"] = None
     for person in people:
         tickers = sorted({r["ticker"] for r in pos if r["person"] == person})
         content = dict(person=person, date=today.isoformat(), window_start=since.isoformat(), tickers=tickers,

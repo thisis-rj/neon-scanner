@@ -19,6 +19,10 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import re
+import time
+
+import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -79,6 +83,79 @@ def scan(days: int = 14) -> None:
     for i in range(0, len(rows), 500):
         sb.table("newsletter_senders").upsert(rows[i:i + 500], on_conflict="sender_email").execute()
     print(f"scanned {len(ids)} messages; {len(rows)} newsletter senders saved", flush=True)
+
+
+# Newsletters that feed the daily report's market takeaway (senders confirmed by --scan, Nov 2026).
+MARKET_SENDERS = {"press@shortsqueez.co": "Short Squeez", "noreply@news.bloomberg.com": "Money Stuff"}
+TAKEAWAY_PROMPT = (
+    "You get today's finance newsletters (Short Squeez = Wall Street news; Money Stuff = Matt Levine's column). "
+    "Write the market takeaway for a retail investor in TWO short lines, in your own words (never quote): "
+    "line 1 = what moved markets / the main story; line 2 = the other notable item. Each line max 18 words. "
+    "Plain English, no jargon, no emojis, no source names. Reply with the two lines separated by ' | '."
+)
+
+
+def _body_text(msg: email.message.Message) -> str:
+    import html as _html
+    parts = []
+    for part in msg.walk():
+        ct = part.get_content_type()
+        if ct not in ("text/plain", "text/html") or part.get_filename():
+            continue
+        try:
+            raw = part.get_payload(decode=True).decode(part.get_content_charset() or "utf-8", "replace")
+        except Exception:
+            continue
+        if ct == "text/html":
+            raw = re.sub(r"(?is)<(script|style).*?</\1>", " ", raw)
+            raw = _html.unescape(re.sub(r"<[^>]+>", " ", raw))
+        parts.append((ct, raw))
+    text = next((t for c, t in parts if c == "text/plain"), None) or next((t for _, t in parts), "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def market_takeaway(since: datetime) -> str | None:
+    """Two-line takeaway from the market newsletters received since `since` (None if none / not configured)."""
+    if not (os.environ.get("GMAIL_ADDRESS") and os.environ.get("GMAIL_APP_PASSWORD") and os.environ.get("GROQ_API_KEY")):
+        return None
+    try:
+        m = connect()
+    except Exception as e:
+        print(f"  newsletter inbox login failed: {e}", flush=True)
+        return None
+    texts = []
+    day = (since - timedelta(days=1)).strftime("%d-%b-%Y")
+    for addr, label in MARKET_SENDERS.items():
+        _, data = m.search(None, f'(SINCE "{day}" FROM "{addr}")')
+        for mid in data[0].split()[-3:]:
+            _, rows = m.fetch(mid, "(BODY.PEEK[])")
+            msg = email.message_from_bytes(rows[0][1])
+            try:
+                d = email.utils.parsedate_to_datetime(msg.get("Date"))
+            except Exception:
+                d = None
+            subj = _dec(msg.get("Subject"))
+            if d is None or d < since or "subscribed" in subj.lower():
+                continue
+            texts.append(f"[{label}] {subj}\n{_body_text(msg)[:6000]}")
+    m.logout()
+    if not texts:
+        return None
+    body = dict(model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"), temperature=0.2, max_tokens=800,
+                reasoning_effort="low", include_reasoning=False,
+                messages=[dict(role="system", content=TAKEAWAY_PROMPT), dict(role="user", content="\n\n".join(texts)[:16000])])
+    for attempt in range(3):
+        r = requests.post("https://api.groq.com/openai/v1/chat/completions", json=body,
+                          headers={"Authorization": f"Bearer {os.environ['GROQ_API_KEY']}"}, timeout=90)
+        if r.status_code == 429:
+            time.sleep(float(r.headers.get("retry-after", 0)) or 10 * (attempt + 1))
+            continue
+        if r.status_code != 200:
+            print(f"  takeaway groq {r.status_code}", flush=True)
+            return None
+        out = " ".join((r.json()["choices"][0]["message"].get("content") or "").split()).strip('"“”')
+        return out or None
+    return None
 
 
 def main() -> None:

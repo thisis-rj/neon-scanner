@@ -2,6 +2,13 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-11-28 — WhatsApp report: market takeaway from Short Squeez + Money Stuff
+
+Author: Riya (with Claude).
+
+- `ingest/newsletters.py`: reads the newsletter Gmail over IMAP (app password; `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`). `--scan` lists newsletter senders (headers only) into `newsletter_senders` (migration **`043`**, results kept in the DB because Actions logs are public). `market_takeaway()` summarises Short Squeez + Money Stuff received since the previous report into two lines (Groq, own words).
+- Daily report WhatsApp template **`neon_daily_report_v4`**: new "Market takeaway" line after Company news (WhatsApp only, not on the report page).
+
 ## 2026-11-28 — Short-seller feed (/short-sellers) + report line
 
 Author: Riya (with Claude).
