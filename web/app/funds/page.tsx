@@ -140,11 +140,11 @@ function Header({ f, meta }: { f: Filters; meta?: React.ReactNode }) {
       title="Funds"
       description={
         <>
-          What the tracked funds did in their latest 13F, stock by stock: who{" "}
+          What the funds on your board did in their latest 13F, stock by stock: who{" "}
           <span className="text-positive">opened or added</span> (≥10%) and who{" "}
-          <span className="text-negative">trimmed or exited</span>. Grouped by industry. Each fund is compared with
-          its own previous filing{f.lag === 2 ? " — here, with the filing two quarters back" : ""}. Counts only, no
-          forecast: read the filings and decide.
+          <span className="text-negative">trimmed or exited</span>, and how many dollars moved. Each fund is compared
+          with its own previous filing{f.lag === 2 ? " — here, with the filing two quarters back" : ""}. Labels are by
+          net $ invested (Strong = +$1B or more). Read the filings and decide.
         </>
       }
       meta={meta}

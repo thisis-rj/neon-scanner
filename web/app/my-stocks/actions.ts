@@ -2,6 +2,7 @@
 
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo } from "@/lib/filers";
+import { onBoard } from "@/lib/fund-board";
 
 // Per-stock metadata (target price / shared comment) — lives on portfolio_positions.
 // NOTE: public server actions. Once /my-stocks is deployed publicly with no gate,
@@ -151,6 +152,7 @@ export async function getStockAnalysis(ticker: string): Promise<{
       const info = filerInfo(cik);
       // 13F readers skip corporate_strategic (they signal via 8-K/13D, not 13F)
       if (info?.category === "corporate_strategic") continue;
+      if (!onBoard(cik)) continue; // Riya's fund board only (lib/fund-board.ts)
       const mine = list[0];
       if (latestPeriod && mine.period === latestPeriod && mine.shares > 0) {
         const prior = list[1];

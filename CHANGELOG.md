@@ -2,6 +2,17 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-11-28 — Riya's fund board: only funds that beat the S&P (or legends); labels by dollars
+
+Author: Riya (with Claude). Vijay: ingest and config are unchanged except one CIK fix (below); all funds are still collected — pages filter for display.
+
+- **`web/lib/fund-board.ts`** — the 21 funds Riya follows, each with its *reported* 2023/2024/2025 returns, source link, and whether the figure is an estimate (press, not published by the fund). Rule vs the S&P 500 (2023 +26.2%, 2024 +24.9%, 2025 +17.7%): beat it in ≥2 of 3 years, or over the 3 years combined, or — for private funds with partial data — in every reported year; plus legends (Druckenmiller, Klarman, Buffett, Tepper, Singer, Marks). Researched all 75 non-corporate tracked funds.
+- **Holdings** shows only board funds, with the reported returns and a badge (hover: S&P comparison + basis; click: source). The 13F-clone 1Y/3Y returns are no longer shown (our calculation, not the funds' results).
+- **Funds** counts only board funds (counts redone in `fund-flows.ts`; `streak` still reflects all tracked funds) and the **label is now by Net $ invested**: Strong ≥ +$1B, Moderate +$250M–$1B, Weak > $0, Net selling < $0. Industry roll-up is still by fund count.
+- **My Stocks**: fund lists (pills + stock analysis holders) show board funds only, with the badge.
+- **Fix — Appaloosa (Tepper) CIK**: config had `0001006438` (Appaloosa Management LP, last 13F in 2016); Appaloosa files under **`0001656456`** (Appaloosa LP). Updated in `config/tracked_filers.yml` and `web/lib/filers.ts`; its 13Fs are now ingested.
+- **Fix — `ingest/filer_returns.py`**: positions reported on several lines (e.g. Berkshire's Apple on 12 lines, one per sub-manager) were de-duplicated by keeping the first line only (~21% of Berkshire's book) — now summed. Berkshire 3Y went from +27.7% to +72.1% on that measure.
+
 ## 2026-11-28 — /funds: rank stocks by dollars invested (Net $), per-fund dropdown
 
 Author: Riya (with Claude). Vijay: your counting (fund_flows() SQL) is untouched.

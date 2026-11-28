@@ -142,14 +142,21 @@ def main() -> None:
         rows = by_cp.get((cik, period))
         if not rows:
             return None
-        seen, pos = set(), []
+        # One position per CUSIP, SUMMING every row: big filers (e.g. Berkshire) report
+        # the same stock on many lines, one per sub-manager. Keeping only the first
+        # line (the old behaviour) used ~21% of Berkshire's book and mis-weighted it.
+        agg: dict[str, dict] = {}
         for h in rows:
-            if h["cusip"] in seen:
-                continue
-            seen.add(h["cusip"])
             v = h.get("value_usd") or 0
-            if v > 0:
-                pos.append((h, float(v)))
+            if v <= 0:
+                continue
+            a = agg.get(h["cusip"])
+            if a is None:
+                agg[h["cusip"]] = dict(h, value_usd=float(v), shares=float(h.get("shares") or 0))
+            else:
+                a["value_usd"] += float(v)
+                a["shares"] += float(h.get("shares") or 0)
+        pos = [(h, h["value_usd"]) for h in agg.values()]
         if not pos:
             return None
         total = pv = wret = 0.0

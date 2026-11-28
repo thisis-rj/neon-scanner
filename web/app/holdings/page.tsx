@@ -1,5 +1,7 @@
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo, tier } from "@/lib/filers";
+import { onBoard, boardFund } from "@/lib/fund-board";
+import { BoardBadge } from "@/components/app/board-badge";
 import { daysAgo, fmtShares, fmtUsd } from "@/lib/format";
 import { cn } from "cn";
 import { TierFilter } from "@/components/TierFilter";
@@ -583,7 +585,10 @@ function perfTone(v: number | null): string {
 }
 
 export default async function HoldingsPage() {
-  const { filers, total, prices, costs, perf } = await fetchHoldings();
+  const all = await fetchHoldings();
+  // Riya's fund board (lib/fund-board.ts): only funds that passed her rule or are legends.
+  const filers = all.filers.filter((f) => onBoard(f.cik));
+  const { total, prices, costs } = all;
   // (nameToTicker mutation already applied to position.ticker in fetchHoldings)
 
   // Counts per tier for the filter badges. Filtering itself is client-side
@@ -611,7 +616,7 @@ export default async function HoldingsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Holdings"
-        description="Each tracked filer's latest 13F: their 10 largest positions, plus what they bought and sold versus the prior quarter. Newest filings first. The gap between “period” and “filed” is the legal disclosure delay."
+        description="Funds on your board only: those that beat the S&P 500 in at least 2 of 2023–25 (or over the 3 years combined, or in every year they reported), plus the legends. Each shows its reported yearly returns; hover the badge for the S&P comparison and source. Their latest 13F: top positions, plus what they bought and sold versus the prior quarter."
         meta={
           <>
             <span>
@@ -645,8 +650,6 @@ export default async function HoldingsPage() {
           const daysSinceFile = f.latestFiledAt
             ? Math.floor((Date.now() - new Date(f.latestFiledAt).getTime()) / 86_400_000)
             : null;
-          const fp = perf[f.cik];
-          const fmtPerf = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(0)}%`);
 
           return (
             <Card key={f.cik} data-tier={signalTier} className="relative gap-3 pb-0">
@@ -681,18 +684,21 @@ export default async function HoldingsPage() {
                   <span className="text-foreground tabular-nums">{fmtUsd(f.totalValue)}</span> across{" "}
                   <span className="text-foreground tabular-nums">{f.totalPositions}</span> positions
                 </span>
-                {fp && (fp.oneY != null || fp.threeY != null) && (
-                  <Hint
-                    label={
+                {(() => {
+                  const b = boardFund(f.cik);
+                  if (!b) return null;
+                  const y = (k: 2023 | 2024 | 2025) => (b.returns[k] == null ? "n/a" : `${b.returns[k]! >= 0 ? "+" : ""}${b.returns[k]}%`);
+                  return (
+                    <span className="flex flex-wrap items-center gap-2">
                       <span className="tabular-nums">
-                        13F book 1Y <span className={perfTone(fp.oneY)}>{fmtPerf(fp.oneY)}</span>
-                        {" · "}3Y <span className={perfTone(fp.threeY)}>{fmtPerf(fp.threeY)}</span>
+                        {b.returns[2023] == null && b.returns[2024] == null && b.returns[2025] == null
+                          ? (b.note ?? b.basis)
+                          : `reported 2023 ${y(2023)} · 2024 ${y(2024)} · 2025 ${y(2025)}`}
                       </span>
-                    }
-                  >
-                    {"13F-clone return: what mirroring this filer's disclosed long book at period-start prices and holding to today would have returned.\n\nNOT the fund's actual return — 13F omits shorts, cash, options and non-US holdings."}
-                  </Hint>
-                )}
+                      <BoardBadge cik={f.cik} />
+                    </span>
+                  );
+                })()}
               </div>
 
               <FilerCardTabs

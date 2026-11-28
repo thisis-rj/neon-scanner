@@ -4,6 +4,7 @@
 
 import { supabaseServer } from "@/lib/supabase";
 import type { FlowRow, Filters } from "@/lib/fund-flow-rules";
+import { onBoard } from "@/lib/fund-board";
 
 export type FlowsResult = { status: "ok"; rows: FlowRow[] } | { status: "not_computed" };
 
@@ -29,8 +30,9 @@ export async function fetchFundFlows(f: Pick<Filters, "lag" | "tiers" | "categor
     rows.push(...batch.map(toRow));
     if (batch.length < PAGE) break;
   }
-  await addDollars(rows);
-  return { status: "ok", rows };
+  const board = keepBoardFunds(rows);
+  await addDollars(board);
+  return { status: "ok", rows: board };
 }
 
 // Value each fund's share change at the stock's average price in that quarter
@@ -93,4 +95,38 @@ function toRow(r: Record<string, unknown>): FlowRow {
   out.bought_usd = null;
   out.sold_usd = null;
   return out as FlowRow;
+}
+
+// Riya's fund board (lib/fund-board.ts): drop funds that aren't on it and redo
+// the per-stock counts from the remaining funds, so the table never counts a
+// fund she has removed. Same counting as fund_flows() (migration 027), applied
+// to the filtered list. `streak` can't be redone here (needs older filings) and
+// still reflects all tracked funds.
+const TIER_MULT: Record<string, number> = { S: 1.5, A: 1.2, B: 1.0, C: 0.7 };
+function keepBoardFunds(rows: FlowRow[]): FlowRow[] {
+  const out: FlowRow[] = [];
+  for (const r of rows) {
+    const funds = r.funds.filter((d) => onBoard(d.cik));
+    if (funds.length === 0) continue;
+    const buy = (d: (typeof funds)[number]) => d.event === "opened" || d.event === "added";
+    const buyers = funds.filter(buy);
+    const top = [...buyers].sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1))[0];
+    out.push({
+      ...r,
+      funds,
+      buyers: buyers.length,
+      sellers: funds.length - buyers.length,
+      net: buyers.length - (funds.length - buyers.length),
+      opened: funds.filter((d) => d.event === "opened").length,
+      added: funds.filter((d) => d.event === "added").length,
+      trimmed: funds.filter((d) => d.event === "trimmed").length,
+      exited: funds.filter((d) => d.event === "exited").length,
+      tier_net: funds.reduce((s, d) => s + (buy(d) ? 1 : -1) * (TIER_MULT[d.tier] ?? 1), 0),
+      sa_buyers: buyers.filter((d) => d.tier === "S" || d.tier === "A").length,
+      conviction_max: top?.pct ?? null,
+      conviction_max_filer: top?.filer ?? null,
+      conviction_sum: buyers.length ? buyers.reduce((s, d) => s + (d.pct ?? 0), 0) : null,
+    });
+  }
+  return out;
 }

@@ -75,7 +75,7 @@ filers:
     badge: "Waits years for true bargains"
 
   - name: "Appaloosa Management (Tepper)"
-    cik: "0001006438"
+    cik: "0001656456"  # Appaloosa LP files 13F under this CIK since 2016 (old 0001006438 = Appaloosa Management LP, last 13F 2016)
     category: value
     multiplier: 1.0
     tier: S

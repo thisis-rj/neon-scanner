@@ -16,6 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Pct, TierBadge, type Tier } from "@/components/app/cells";
+import { BoardBadge } from "@/components/app/board-badge";
 import { daysAgo, fmtInr, fmtQty, fmtShares, fmtUsd, fmtUsdExact, shortDate } from "@/lib/format";
 
 type Analysis = Awaited<ReturnType<typeof getStockAnalysis>>;
@@ -119,6 +120,7 @@ function StockAnalysisPanel({ ticker }: { ticker: string }) {
                           <div className="flex items-center gap-2">
                             {f.tier && <TierBadge tier={f.tier} />}
                             <span className="font-medium text-foreground">{f.name}</span>
+                            <BoardBadge cik={f.cik} />
                           </div>
                           <div className="text-[11px] text-muted-foreground capitalize">{f.category.replace(/_/g, " ")}</div>
                         </TableCell>
@@ -281,6 +283,7 @@ function nonRoutine(t: InsiderTrade, kind: "buy" | "sell"): boolean {
 }
 
 export type FundMove = {
+  cik?: string;
   fund: string;
   tier: string | null;
   event: string; // opened | added | trimmed | exited
@@ -757,7 +760,12 @@ function FundList({ moves }: { moves: FundMove[] }) {
             m.sharesPrev && m.sharesNow != null ? (m.sharesNow - m.sharesPrev) / m.sharesPrev : null;
           return (
             <TableRow key={i}>
-              <TableCell className="font-medium">{m.fund}</TableCell>
+              <TableCell className="font-medium">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  {m.fund}
+                  <BoardBadge cik={m.cik} />
+                </span>
+              </TableCell>
               <TableCell>{m.tier && ["S", "A", "B", "C"].includes(m.tier) ? <TierBadge tier={m.tier as Tier} /> : "—"}</TableCell>
               <TableCell className={buy ? "text-positive" : "text-negative"}>{FUND_LABEL[m.event] ?? m.event}</TableCell>
               <TableCell className="text-right tabular-nums text-muted-foreground">

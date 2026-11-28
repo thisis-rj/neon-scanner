@@ -1,5 +1,6 @@
 import { supabaseServer } from "@/lib/supabase";
 import { filerInfo } from "@/lib/filers";
+import { onBoard } from "@/lib/fund-board";
 import { PageHeader } from "@/components/app/page-header";
 import { MyStocksTabs, type Holding, type SellLog, type PocketCash, type StockSignals, type InsiderTrade } from "@/components/MyStocksTabs";
 
@@ -347,7 +348,7 @@ async function loadData(): Promise<{
     // Latest-quarter 13F fund moves (vs the fund's previous filing = lag 1).
     const { data: fc } = await sb
       .from("fund_position_changes")
-      .select("ticker,event,period,lag_quarters,filer_name,tier,shares_prev,shares_cur")
+      .select("ticker,event,period,lag_quarters,cik,filer_name,tier,shares_prev,shares_cur")
       .in("ticker", heldTickers)
       .eq("lag_quarters", 1);
     const priceOf = new Map<string, number>();
@@ -356,6 +357,7 @@ async function loadData(): Promise<{
     for (const r of fc ?? []) if (!maxPeriod || String(r.period) > maxPeriod) maxPeriod = String(r.period);
     for (const r of fc ?? []) {
       if (String(r.period) !== maxPeriod) continue;
+      if (!onBoard(String(r.cik))) continue; // Riya's fund board only (lib/fund-board.ts)
       const s = sig(String(r.ticker));
       s.fundPeriod = maxPeriod;
       const e = String(r.event);
@@ -363,6 +365,7 @@ async function loadData(): Promise<{
       else if (e === "trimmed" || e === "exited") s.fundTrimmed++;
       else continue;
       s.fundMoves.push({
+        cik: String(r.cik),
         fund: String(r.filer_name),
         tier: r.tier == null ? null : String(r.tier),
         event: e,

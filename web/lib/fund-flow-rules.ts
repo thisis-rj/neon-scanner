@@ -75,22 +75,25 @@ export const LABEL_RULE = {
   sellingNet: -2,
 } as const;
 
+// Label by MONEY, not fund count (Riya, Nov 2026): a $100K add no longer counts
+// the same as a $6B one. Uses net_usd (fund-flows.ts) = $ bought − $ sold by the
+// funds on Riya's board. Vijay: the count-based rule is in git history (LABEL_RULE).
+export const USD_LABEL_RULE = { strong: 1e9, moderate: 250e6 } as const;
+
 export const LABEL_RULE_TEXT: { label: Label; rule: string }[] = [
-  {
-    label: "Strong",
-    rule: `net ≥ ${LABEL_RULE.strongNet}, at least one S/A-tier fund buying, and net buying ${LABEL_RULE.strongStreak}+ quarters in a row`,
-  },
-  { label: "Moderate", rule: `net ≥ ${LABEL_RULE.moderateNet} (and not Strong)` },
-  { label: "Weak", rule: `net ${LABEL_RULE.weakNet}–${LABEL_RULE.moderateNet - 1}` },
-  { label: "Net selling", rule: `net ≤ ${LABEL_RULE.sellingNet}` },
+  { label: "Strong", rule: "net $ invested ≥ +$1B" },
+  { label: "Moderate", rule: "net $ invested +$250M to +$1B" },
+  { label: "Weak", rule: "net $ invested above $0, under +$250M" },
+  { label: "Net selling", rule: "more $ sold than bought" },
 ];
 
-export function label(r: Pick<FlowRow, "net" | "sa_buyers" | "streak">): Label | null {
-  if (r.net >= LABEL_RULE.strongNet && r.sa_buyers >= 1 && r.streak >= LABEL_RULE.strongStreak) return "Strong";
-  if (r.net >= LABEL_RULE.moderateNet) return "Moderate";
-  if (r.net >= LABEL_RULE.weakNet) return "Weak";
-  if (r.net <= LABEL_RULE.sellingNet) return "Net selling";
-  return null;
+export function label(r: Pick<FlowRow, "net_usd">): Label | null {
+  const v = r.net_usd;
+  if (v == null || v === 0) return null;
+  if (v >= USD_LABEL_RULE.strong) return "Strong";
+  if (v >= USD_LABEL_RULE.moderate) return "Moderate";
+  if (v > 0) return "Weak";
+  return "Net selling";
 }
 
 const LABEL_RANK: Record<string, number> = { Strong: 4, Moderate: 3, Weak: 2, none: 1, "Net selling": 0 };
