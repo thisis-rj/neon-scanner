@@ -2,6 +2,15 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-11-27 — Daily WhatsApp report + /report page; analyst rating changes; Groq model fix
+
+Author: Riya (with Claude).
+
+- **Daily report** (`daily-report.yml`, 13:00 UTC = 6:30 PM IST, Mon–Fri): `ingest.analyst_ratings` (held stocks) then `ingest.daily_report --send`. Per person: company news from SEC filings (8-K items in plain words, share-sale / takeover / 13D forms, one-line Groq summary for important ones), market (last two completed US sessions), non-routine insider trades (unplanned sales + own-money buys), analyst rating/target changes, earnings in the next 2 weeks; short-seller reports not connected yet. Saved to `daily_reports` (migration **`041`**), shown at **/report/<date>-<person>**, sent as WhatsApp template `neon_daily_report_v2` from +91 95890 61463 (needs secrets `WHATSAPP_TOKEN`, `WHATSAPP_TO_RIYA`, optional `WHATSAPP_TO_VIJAY`).
+- **Analyst ratings**: migration **`039`** (`analyst_calls`, `analyst_firm_records`) + `ingest/analyst_ratings.py` (Yahoo, firm-level). Firm track records are context only — tested: past target hit rate did not predict later hit rate.
+- **Fix (Vijay):** Groq retired `llama-3.3-70b-versatile`, so `summarize_8k` has been failing (404). It now defaults to `openai/gpt-oss-120b` (override with `GROQ_MODEL`), with a bigger token budget because that model's reasoning counts against `max_tokens`.
+- `whatsapp-setup.yml`: manual tools (number status, two-step PIN, register, badge status, test send, template submit/status).
+
 ## 2026-11-27 — /sectors: Bitcoin, metals and sector funds on one chart
 
 Author: Riya (with Claude).

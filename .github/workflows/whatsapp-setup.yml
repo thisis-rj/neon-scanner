@@ -81,18 +81,18 @@ jobs:
         run: |
           cat > /tmp/tpl.json <<'JSON'
           {
-            "name": "neon_daily_report",
+            "name": "neon_daily_report_v2",
             "language": "en",
             "category": "UTILITY",
             "components": [
               {"type": "HEADER", "format": "TEXT", "text": "Neon daily report"},
               {"type": "BODY",
-               "text": "Here is today's summary for the stocks in your Neon Scanner portfolio.\n\nMarket today: {{1}}\n\nNon-routine insider trades on your stocks: {{2}}\n\nShort-seller reports on your stocks: {{3}}\n\nAnalyst rating changes on your stocks: {{4}}\n\nUpcoming earnings on your stocks: {{5}}\n\nTap the button below for the full report with details and links.",
-               "example": {"body_text": [["Nasdaq -1.2%, Bitcoin -3%, gold +0.4%", "NVDA director sold $300M (unplanned)", "None on your stocks", "INSM downgraded by William Blair", "NVDA reports 19 Nov"]]}},
+               "text": "Here is today's summary for the stocks in your Neon Scanner portfolio.\n\nCompany news: {{1}}\n\nMarket: {{2}}\n\nNon-routine insider trades on your stocks: {{3}}\n\nShort-seller reports on your stocks: {{4}}\n\nAnalyst rating changes on your stocks: {{5}}\n\nUpcoming earnings on your stocks: {{6}}\n\nTap the button below for the full report with details and links to the filings.",
+               "example": {"body_text": [["INSM: Insmed agreed to be acquired by Sanofi for $175 per share in cash", "Wed 25 Nov: S&P 500 -0.3%, Nasdaq-100 -0.7%, Bitcoin +1.1%", "None on your stocks", "Not connected yet", "INSM 11 downgrades; NVDA 2 upgrades", "SNPS Tue 08 Dec; AVGO Wed 09 Dec"]]}},
               {"type": "BUTTONS", "buttons": [
                 {"type": "URL", "text": "Open full report",
                  "url": "https://neon-scanner-riya1910jain-2522s-projects.vercel.app/report/{{1}}",
-                 "example": ["2026-11-27"]}
+                 "example": ["2026-11-27-riya"]}
               ]}
             ]
           }
@@ -105,4 +105,4 @@ jobs:
         env:
           TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
         run: |
-          curl -sS -H "Authorization: Bearer $TOKEN" "$GRAPH/$WABA_ID/message_templates?name=neon_daily_report&fields=name,status,category,rejected_reason" | python3 -m json.tool
+          curl -sS -H "Authorization: Bearer $TOKEN" "$GRAPH/$WABA_ID/message_templates?name=neon_daily_report_v2&fields=name,status,category,rejected_reason" | python3 -m json.tool

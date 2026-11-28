@@ -36,7 +36,8 @@ SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SECRET_KEY = os.environ["SUPABASE_SECRET_KEY"]
 EDGAR_USER_AGENT = os.environ["EDGAR_USER_AGENT"]
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
+# Groq retired llama-3.3-70b-versatile (404 model_not_found, seen Nov 2026) — Vijay: override with GROQ_MODEL if needed.
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # Polite scrape pace for sec.gov.
@@ -159,6 +160,10 @@ def groq_summarize(body: str, filer_name: str | None, items: str | None) -> str 
         "temperature": 0.2,
         "max_tokens": 80,
     }
+    if GROQ_MODEL.startswith("openai/gpt-oss"):
+        # Reasoning model: its thinking counts against max_tokens, so keep thinking
+        # short, hide it from the reply, and leave room for the one-sentence answer.
+        payload.update({"max_tokens": 600, "reasoning_effort": "low", "include_reasoning": False})
 
     for attempt in range(3):
         # Steady-state pacing (TPM-aware)
