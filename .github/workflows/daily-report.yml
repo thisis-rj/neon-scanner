@@ -12,6 +12,11 @@ on:
         description: "Send WhatsApp messages (false = build only)"
         type: boolean
         default: true
+      template:
+        description: "Instead of a report: submit the WhatsApp template to Meta, or check its approval"
+        type: choice
+        options: [none, submit, status]
+        default: none
 
 env:
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -34,10 +39,15 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements.txt
       - run: pip install -r requirements.txt
+      - name: WhatsApp template admin
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.template != 'none' }}
+        run: python -m ingest.daily_report --template ${{ inputs.template }}
       - name: Analyst rating changes for held stocks (~25 tickers)
+        if: ${{ github.event_name == 'schedule' || inputs.template == 'none' }}
         run: python -m ingest.analyst_ratings
         continue-on-error: true
       - name: Build reports and send WhatsApp
+        if: ${{ github.event_name == 'schedule' || inputs.template == 'none' }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.send }}" = "true" ]; then
             python -m ingest.daily_report --send

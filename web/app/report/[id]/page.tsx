@@ -19,7 +19,7 @@ type Content = {
   date: string;
   window_start: string;
   tickers: string[];
-  market: { asof: string | null; rows: { label: string; last: number; change: string }[] };
+  market: { asof: string | null; rows: { label: string; symbol: string; last: number; change: string; delta?: number; line?: string }[] };
   filings: Filing[];
   insider: Insider[];
   ratings: Rating[];
@@ -89,14 +89,25 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       </Section>
 
       <Section title={`Market${c.market.asof ? ` · ${nice(c.market.asof)}` : ""}`} empty={c.market.rows.length === 0 && "Market data unavailable."}>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {c.market.rows.map((r) => (
-            <div key={r.label} className="flex flex-col">
-              <span className="text-xs text-muted-foreground">{r.label}</span>
-              <span className="font-mono text-sm tabular-nums">{r.change}</span>
-            </div>
-          ))}
-        </div>
+        <ul className="flex flex-col gap-1.5 text-sm">
+          {c.market.rows.map((r) => {
+            const d = r.delta ?? 0;
+            const inverse = r.symbol === "^TNX" || r.symbol === "^VIX"; // up is bad for stocks
+            return (
+              <li key={r.label} className="flex items-baseline gap-2">
+                <span
+                  aria-hidden
+                  className={`inline-block size-2 shrink-0 translate-y-[-1px] rounded-full ${d > 0 ? "bg-positive" : d < 0 ? "bg-negative" : "bg-muted-foreground"}`}
+                />
+                <span className="w-56 shrink-0 text-muted-foreground">
+                  {r.label}
+                  {inverse && <span className="text-[11px]"> · up is bad for stocks</span>}
+                </span>
+                <span className="font-mono tabular-nums">{(r.line ?? r.change).replace(/^[🟢🔴⚪]\s*/u, "")}</span>
+              </li>
+            );
+          })}
+        </ul>
       </Section>
 
       <Section title="Insider trades (non-routine)" empty={c.insider.length === 0 && "None on your stocks. Planned (10b5-1) sales are left out."}>

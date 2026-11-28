@@ -29,12 +29,36 @@ SITE = "https://neon-scanner-riya1910jain-2522s-projects.vercel.app"
 GRAPH = "https://graph.facebook.com/v21.0"
 PHONE_NUMBER_ID = "1047051355158686"   # +91 95890 61463 (not secret)
 WABA_ID = "956091127378728"
-TEMPLATE = "neon_daily_report_v2"   # 6 lines: news, market, insider, shorts, ratings, earnings
+TEMPLATE = "neon_daily_report_v3"
+# Template body (WhatsApp forbids line breaks inside a variable, so each market
+# line is its own variable). Submitted with --submit-template; params filled in send().
+TEMPLATE_BODY = (
+    "📰 Company news: {{1}}\n\n"
+    "📊 Market, last US trading day:\n"
+    "S&P 500: {{2}}\n"
+    "Nasdaq-100: {{3}}\n"
+    "Chip stocks: {{4}}\n"
+    "Bitcoin: {{5}}\n"
+    "Gold: {{6}}\n"
+    "US interest rate (10-yr, up is bad for stocks): {{7}}\n"
+    "Fear gauge (VIX, up is bad for stocks): {{8}}\n\n"
+    "🕵️ Non-routine insider trades: {{9}}\n\n"
+    "🩳 Short-seller reports: {{10}}\n\n"
+    "⭐ Analyst rating changes: {{11}}\n\n"
+    "📅 Upcoming earnings: {{12}}\n\n"
+    "Tap below for the full report with details and links."
+)
+PARAM_KEYS = ["news", "sp", "ndx", "chips", "btc", "gold", "rate", "vix", "insider", "shorts", "ratings", "earnings"]
+TEMPLATE_EXAMPLE = ["Sanofi is buying Insmed for $175 a share in cash", "🟢 up 1.6%", "🟢 up 2.7%", "🟢 up 4.2%",
+                    "🟢 up 0.2%", "🔴 down 0.7%", "🟢 up 0.09 to 4.94%", "🔴 down 4.5 to 23.8 (nervous)",
+                    "None on your stocks", "Not connected yet", "INSM 11 downgrades; NVDA 2 upgrades", "SNPS Tue 08 Dec"]
+FIXED_LEN = len(re.sub(r"\{\{\d+\}\}", "", TEMPLATE_BODY))
 IST = timezone(timedelta(hours=5, minutes=30))
-MAX_PARAM = 230  # keep each WhatsApp line short; full detail is on the page
+MAX_PARAM = 180
 
-MARKET = [("S&P 500", "SPY"), ("Nasdaq-100", "QQQ"), ("Chips", "SMH"), ("Bitcoin", "BTC-USD"),
-          ("Gold", "GC=F"), ("10y yield", "^TNX"), ("VIX", "^VIX")]
+MARKET = [("S&P 500", "SPY"), ("Nasdaq-100", "QQQ"), ("Chip stocks", "SMH"), ("Bitcoin", "BTC-USD"),
+          ("Gold", "GC=F"), ("US interest rate (10-yr)", "^TNX"), ("Fear gauge (VIX)", "^VIX")]
+MARKET_KEYS = {"SPY": "sp", "QQQ": "ndx", "SMH": "chips", "BTC-USD": "btc", "GC=F": "gold", "^TNX": "rate", "^VIX": "vix"}
 
 # 8-K item codes -> plain words (SEC Form 8-K General Instructions).
 ITEMS = {
@@ -95,12 +119,19 @@ def market_section() -> dict:
             continue
         last, prev = float(last), float(prev)
         if s == "^TNX":
-            txt = f"{last:.2f}% ({last - prev:+.2f})"
+            delta, txt = last - prev, f"{last:.2f}% ({last - prev:+.2f})"
+            flat = abs(delta) < 0.005
+            dot_line = "⚪ flat at " + f"{last:.2f}%" if flat else f"{'🟢 up' if delta > 0 else '🔴 down'} {abs(delta):.2f} to {last:.2f}%"
         elif s == "^VIX":
-            txt = f"{last:.1f} ({last - prev:+.1f})"
+            delta, txt = last - prev, f"{last:.1f} ({last - prev:+.1f})"
+            mood = "calm" if last < 15 else "normal" if last < 20 else "nervous" if last < 30 else "fear"
+            flat = abs(delta) < 0.05
+            dot_line = (f"⚪ flat at {last:.1f}" if flat else f"{'🟢 up' if delta > 0 else '🔴 down'} {abs(delta):.1f} to {last:.1f}") + f" ({mood})"
         else:
+            delta = (last / prev - 1) * 100
             txt = pct(last, prev)
-        rows.append(dict(label=label, symbol=s, last=round(last, 2), change=txt))
+            dot_line = "⚪ flat" if abs(delta) < 0.05 else f"{'🟢 up' if delta > 0 else '🔴 down'} {abs(delta):.1f}%"
+        rows.append(dict(label=label, symbol=s, last=round(last, 2), change=txt, delta=round(delta, 4), line=dot_line))
         parts.append(f"{label} {txt}")
     asof = str(last_ts.date())
     return dict(asof=asof, rows=rows, line=f"{datetime.fromisoformat(asof).strftime('%a %d %b')}: " + ", ".join(parts))
@@ -153,19 +184,97 @@ def filings_section(tickers: list[str], since: datetime) -> list[dict]:
             url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{doc}"
             label = next((w for code, w in LABEL_ORDER if code in items), None) or (
                 "share sale (dilution)" if form in DILUTION_FORMS else "takeover filing" if form in DEAL_FORMS
-                else "5%+ activist stake" if "13D" in form else form)
+                else "5%+ stake filing" if "13D" in form else form)
             out.append(dict(ticker=t, form=form, filed=fd, items=items, what=what, label=label, level=level, url=url, summary=None))
-    # One-sentence plain summaries for the important ones (Groq, already used by summarize_8k).
-    if os.environ.get("GROQ_API_KEY"):
-        try:
-            from ingest.summarize_8k import fetch_filing_body, groq_summarize
-            for f in [x for x in out if x["level"] == "high"][:8]:
-                body = fetch_filing_body(f["url"], "", "")
-                if body:
-                    f["summary"] = groq_summarize(body, f["ticker"], ",".join(f["items"]) or f["form"])
-        except Exception as e:  # summaries are a nice-to-have; never block the report
-            print(f"  summaries skipped: {e}", flush=True)
+    # Plain one-sentence summaries for the important ones; 13D stakes read straight off the cover page.
+    for f in [x for x in out if x["level"] == "high"][:10]:
+        text = filing_text(f["url"])
+        if "13D" in f["form"]:
+            shares, pc, who = stake_numbers(text)
+            prev = previous_stake(f["ticker"], f["filed"]) if shares else None
+            if shares:
+                who_s = who or "A 5%+ holder"
+                chg = ""
+                if prev:
+                    d = shares - prev[0]
+                    chg = f", {'bought' if d >= 0 else 'sold'} {abs(d) / 1e6:.1f}M shares since {prev[1]}"
+                f["summary"] = f"{who_s} now owns {pc:.1f}%{(' (' + chg.lstrip(', ') + ')') if chg else ''}" if pc else None
+                continue
+        f["summary"] = summarize_filing(text, f["ticker"], f["form"], f["items"])
     return sorted(out, key=lambda x: (x["level"] != "high", x["ticker"]))
+
+
+SUMMARY_PROMPT = (
+    "You summarise one SEC filing for a retail investor who owns the stock. Reply with ONE plain-English "
+    "sentence of at most 16 words. Start with the company's short name, never its ticker. Always name the "
+    "counterparty (buyer, seller, investor, new executive) and give the key number (price per share, deal "
+    "value, stake %, amount raised). For mergers say who is buying whom and at what price. No legal jargon, "
+    "no form names, no dates unless essential."
+)
+
+
+def summarize_filing(text: str, ticker: str, form: str, items: list[str]) -> str | None:
+    key = os.environ.get("GROQ_API_KEY")
+    if not key or not text:
+        return None
+    body = dict(model=os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b"), temperature=0.1, max_tokens=700,
+                reasoning_effort="low", include_reasoning=False,
+                messages=[dict(role="system", content=SUMMARY_PROMPT),
+                          dict(role="user", content=f"Ticker {ticker}, form {form}, items {','.join(items) or '-'}.\n\n{text[:12000]}")])
+    for attempt in range(3):
+        try:
+            r = requests.post("https://api.groq.com/openai/v1/chat/completions", json=body,
+                              headers={"Authorization": f"Bearer {key}"}, timeout=60)
+        except Exception:
+            return None
+        if r.status_code == 429:
+            time.sleep(float(r.headers.get("retry-after", 0)) or 8 * (attempt + 1))
+            continue
+        if r.status_code != 200:
+            print(f"  groq {r.status_code}: {r.text[:150]}", flush=True)
+            return None
+        out = (r.json()["choices"][0]["message"].get("content") or "").strip().strip('"“”')
+        return " ".join(out.split()).rstrip(".") or None
+    return None
+
+
+def filing_text(url: str) -> str:
+    h = {"User-Agent": os.environ["EDGAR_USER_AGENT"]}
+    try:
+        x = requests.get(url, headers=h, timeout=30).text
+    except Exception:
+        return ""
+    import html as _html
+    return re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", x)))
+
+
+def stake_numbers(text: str) -> tuple[float | None, float | None, str | None]:
+    """(shares, percent, reporting person) from a Schedule 13D cover page."""
+    amt = re.search(r"Aggregate amount beneficially owned by each reporting person\s*([\d,\.]+)", text, re.I)
+    pc = re.search(r"Percent of class represented by amount in Row \(?11\)?\s*([\d\.]+)\s*%", text, re.I)
+    nm = re.search(r"Names? of reporting persons?\s*(?:I\.R\.S\.[^A-Z]*)?([A-Z].{2,80}?)\s+2\s+Check", text, re.I)
+    f = lambda m: float(m.group(1).replace(",", "")) if m else None
+    name = nm.group(1).strip() if nm else None
+    if name:  # "Tether Global Investments Fund, S.I.C.A.F., S.A." -> "Tether Global Investments Fund"
+        name = re.split(r",\s*(?:S\.|Inc|LLC|L\.P|LP|Ltd|Limited|plc|N\.V|AG|GmbH)", name)[0].strip()
+    return f(amt), f(pc), name
+
+
+def previous_stake(ticker: str, before: str) -> tuple[float, str] | None:
+    """Shares in the most recent earlier 13D on the same company (any filer) — good enough when one
+    big holder files repeatedly; returns (shares, 'Mon YYYY')."""
+    cik = cik_for(ticker)
+    if not cik:
+        return None
+    h = {"User-Agent": os.environ["EDGAR_USER_AGENT"]}
+    r = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=h, timeout=30).json()["filings"]["recent"]
+    for form, fd, acc, doc in zip(r["form"], r["filingDate"], r["accessionNumber"], r["primaryDocument"]):
+        if fd >= before or "13D" not in form:
+            continue
+        shares, _, _ = stake_numbers(filing_text(f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc.replace('-', '')}/{doc}"))
+        if shares:
+            return shares, datetime.fromisoformat(fd).strftime("%b %Y")
+    return None
 
 
 def role(r: dict, title_key: str, dir_key: str) -> str:
@@ -218,8 +327,12 @@ def ratings_section(sb, tickers: list[str], since: datetime) -> list[dict]:
             tgt = f"target ${prior:,.0f} → ${pt:,.0f}"
         elif pt:
             tgt = f"target ${pt:,.0f}"
-        if a in ("up", "down", "init") or (pt and prior and abs(pt - prior) > 0.005):
-            kind = {"up": "upgrade", "down": "downgrade", "init": "new coverage"}.get(a, "target change")
+        moved = bool(pt and prior and abs(pt - prior) > 0.005)
+        if a in ("up", "down", "init") or moved:
+            if a in ("up", "down", "init"):
+                kind = {"up": "upgrade", "down": "downgrade", "init": "new coverage"}[a]
+            else:
+                kind = "target raised" if pt > prior else "target cut"
             out.append(dict(ticker=r["ticker"], firm=r["firm"], kind=kind,
                             grade=f"{r.get('from_grade') or '—'} → {r.get('to_grade') or '—'}" if a in ("up", "down") else (r.get("to_grade") or ""),
                             target=tgt, at=r["graded_at"][:10]))
@@ -232,13 +345,14 @@ def earnings_section(sb, tickers: list[str], today: date) -> list[dict]:
     return sorted([dict(ticker=r["ticker"], name=r.get("name"), date=r["next_earnings"]) for r in rows], key=lambda x: x["date"])
 
 
-def clip(items: list[str], empty: str) -> str:
+def clip(items: list[str], empty: str, limit: int = 0, max_items: int = 99) -> str:
+    limit = limit or MAX_PARAM
     if not items:
         return empty
     s, n = "", 0
-    for it in items:
+    for it in items[:max_items]:
         nxt = (s + "; " if s else "") + it
-        if len(nxt) > MAX_PARAM - 12:
+        if len(nxt) > limit - 12:
             break
         s, n = nxt, n + 1
     rest = len(items) - n
@@ -246,31 +360,58 @@ def clip(items: list[str], empty: str) -> str:
 
 
 def summarize(content: dict) -> dict:
-    fil = content["filings"]
-    ins = content["insider"]
-    rat = content["ratings"]
-    ern = content["earnings"]
+    fil, ins, rat, ern = content["filings"], content["insider"], content["ratings"], content["earnings"]
     by_t: dict[str, list[dict]] = {}
     for r in rat:
         by_t.setdefault(r["ticker"], []).append(r)
     rat_txt = []
     for t, rs in by_t.items():
-        kinds = {}
+        kinds: dict[str, int] = {}
         for r in rs:
             kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
-        rat_txt.append(f"{t} " + ", ".join(f"{n} {k}{'s' if n > 1 and not k.endswith('coverage') else ''}" for k, n in kinds.items()))
-    news = []
-    for f in [x for x in fil if x["level"] == "high"]:
-        news.append(f"{f['ticker']}: {f['summary'].rstrip('.')}" if f.get("summary") else f"{f['ticker']} {f['label']}")
-    return dict(
-        news=clip(news, "No major filings on your stocks"),
-        market=content["market"]["line"][:MAX_PARAM],
+        bits = []
+        for k, n in kinds.items():
+            if k.startswith("target"):
+                one = [r for r in rs if r["kind"] == k]
+                if n == 1:  # "JP Morgan cut target $940 → $775"
+                    bits.append(f"{one[0]['firm']} {'raised' if k.endswith('raised') else 'cut'} {one[0]['target'].replace('target ', 'target ')}")
+                else:
+                    bits.append(f"{n} {k.replace('target ', 'targets ')}")
+            else:
+                bits.append(f"{n} {k}{'s' if n > 1 and k != 'new coverage' else ''}")
+        rat_txt.append(f"{t} " + ", ".join(bits))
+    out = dict(
         insider=clip([f"{x['ticker']} {x['role']} {'bought' if x['side'] == 'buy' else 'sold'} ${x['usd'] / 1e6:,.1f}M" for x in ins],
                      "None on your stocks"),
         shorts="Not connected yet",
         ratings=clip(rat_txt, "No changes on your stocks"),
         earnings=clip([f"{e['ticker']} {datetime.fromisoformat(e['date']).strftime('%a %d %b')}" for e in ern], "None in the next 2 weeks"),
     )
+    for r in content["market"]["rows"]:
+        out[MARKET_KEYS[r["symbol"]]] = r["line"]
+    for k in MARKET_KEYS.values():
+        out.setdefault(k, "n/a")
+    # News: up to 5, most important first; each headline shortened so the whole message fits 1,024 chars.
+    prio = {w: i for i, (_, w) in enumerate(LABEL_ORDER)}
+    heads = []
+    for f in sorted([x for x in fil if x["level"] == "high"], key=lambda x: prio.get(x["label"], 50)):
+        heads.append(f"{f['ticker']}: {f['summary'].rstrip('.')}" if f.get("summary") else f"{f['ticker']}: {f['label']}")
+    budget = 1015 - FIXED_LEN - sum(len(v) for v in out.values())
+    shown = heads[:5]
+    if not shown:
+        out["news"] = "No major filings on your stocks"
+    else:
+        more = len(heads) - len(shown)
+        tail = f" (+{more} more on the page)" if more else ""
+        per = max(45, (budget - len(tail)) // len(shown) - 3)
+        def trim(h: str) -> str:  # cut at a whole word
+            if len(h) <= per:
+                return h
+            return h[: per - 1].rsplit(" ", 1)[0].rstrip(" ,;:(") + "…"
+        cut = [trim(h) for h in shown]
+        out["news"] = " • ".join(cut) + tail
+    out["market_line"] = content["market"]["line"]
+    return out
 
 
 def clean_param(s: str) -> str:
@@ -290,10 +431,13 @@ def send(person: str, report_id: str, summary: dict) -> bool:
     if status != "APPROVED":
         print(f"  template {TEMPLATE} is {status} — built, not sent", flush=True)
         return False
+    params = [clean_param(summary.get(k, "-")) for k in PARAM_KEYS]
+    total = FIXED_LEN + sum(len(v) for v in params)
+    if total > 1024:  # last-resort trim of the news line
+        params[0] = params[0][: max(40, len(params[0]) - (total - 1024) - 1)].rstrip(" ,;•") + "…"
     body = dict(messaging_product="whatsapp", to=to, type="template", template=dict(
         name=TEMPLATE, language=dict(code="en"), components=[
-            dict(type="body", parameters=[dict(type="text", text=clean_param(summary[k]))
-                                          for k in ("news", "market", "insider", "shorts", "ratings", "earnings")]),
+            dict(type="body", parameters=[dict(type="text", text=v) for v in params]),
             dict(type="button", sub_type="url", index="0", parameters=[dict(type="text", text=report_id)]),
         ]))
     r = requests.post(f"{GRAPH}/{PHONE_NUMBER_ID}/messages", json=body,
@@ -303,13 +447,34 @@ def send(person: str, report_id: str, summary: dict) -> bool:
     return ok
 
 
+def template_admin(action: str) -> None:
+    token = os.environ["WHATSAPP_TOKEN"]
+    hdr = {"Authorization": f"Bearer {token}"}
+    if action == "submit":
+        tpl = dict(name=TEMPLATE, language="en", category="UTILITY", components=[
+            dict(type="HEADER", format="TEXT", text="Neon daily report"),
+            dict(type="BODY", text=TEMPLATE_BODY, example=dict(body_text=[TEMPLATE_EXAMPLE])),
+            dict(type="BUTTONS", buttons=[dict(type="URL", text="Open full report", url=f"{SITE}/report/{{{{1}}}}",
+                                               example=["2026-11-27-riya"])]),
+        ])
+        r = requests.post(f"{GRAPH}/{WABA_ID}/message_templates", json=tpl, headers=hdr, timeout=30).json()
+    else:
+        r = requests.get(f"{GRAPH}/{WABA_ID}/message_templates", headers=hdr, timeout=30,
+                         params={"name": TEMPLATE, "fields": "name,status,category,rejected_reason"}).json()
+    print(json.dumps(r, indent=2), flush=True)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
+    p.add_argument("--template", choices=["submit", "status"], default=None, help="submit/check the WhatsApp template")
     p.add_argument("--person", default=None)
     p.add_argument("--send", action="store_true")
     p.add_argument("--print", action="store_true")
     p.add_argument("--since", default=None, help="override the window start, e.g. 2026-11-23T13:00:00+00:00 (testing)")
     a = p.parse_args()
+    if a.template:
+        template_admin(a.template)
+        return
     sb = sb_client()
     now = datetime.now(timezone.utc)
     today = now.astimezone(IST).date()
