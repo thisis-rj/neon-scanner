@@ -24,6 +24,7 @@ const NAV = [
   { href: "/earnings", label: "Earnings" },
   { href: "/my-stocks", label: "My Stocks" },
   { href: "/sectors", label: "Sectors" },
+  { href: "/short-sellers", label: "Short sellers" },
   { href: "/lag7", label: "Lag7" },
   { href: "/earnings-test", label: "Earnings test" },
 ] as const;

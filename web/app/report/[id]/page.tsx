@@ -14,6 +14,7 @@ type Filing = { ticker: string; form: string; filed: string; label: string; what
 type Insider = { side: "buy" | "sell"; ticker: string; name: string; role: string; date: string; usd: number };
 type Rating = { ticker: string; firm: string; kind: string; grade: string; target: string; at: string };
 type Earn = { ticker: string; name: string | null; date: string };
+type Short = { url: string; ticker: string; firms: string[]; title: string; source: string | null; published: string; kind: "report" | "commentary" };
 type Content = {
   person: string;
   date: string;
@@ -24,6 +25,7 @@ type Content = {
   insider: Insider[];
   ratings: Rating[];
   earnings: Earn[];
+  shorts?: Short[] | null;
 };
 
 const nice = (iso: string) =>
@@ -138,8 +140,27 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         </Table>
       </Section>
 
-      <Section title="Short-seller reports" empty="Not connected yet." >
-        {null}
+      <Section title="Short sellers" empty={!(c.shorts && c.shorts.length) && "No short-seller news on your stocks."}>
+        <ul className="flex flex-col divide-y divide-border text-sm">
+          {(c.shorts ?? []).map((s) => (
+            <li key={s.url} className="flex flex-col gap-0.5 py-2 first:pt-0 last:pb-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono font-medium">{s.ticker}</span>
+                {s.kind === "report" ? <Badge variant="negative">short report</Badge> : <Badge variant="outline">commentary</Badge>}
+                <span className="text-xs text-muted-foreground">
+                  {nice(s.published)}
+                  {s.firms.length ? ` · ${s.firms.join(", ")}` : ""}
+                </span>
+              </div>
+              <a href={s.url} target="_blank" rel="noreferrer" className="text-muted-foreground underline-offset-4 hover:underline">
+                {s.title}
+              </a>
+            </li>
+          ))}
+        </ul>
+        <Link href="/short-sellers" className="mt-2 inline-block text-xs text-primary underline-offset-4 hover:underline">
+          All short-seller news →
+        </Link>
       </Section>
 
       <Section title="Analyst rating changes" empty={c.ratings.length === 0 && "No changes on your stocks."}>

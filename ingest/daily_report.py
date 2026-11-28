@@ -168,6 +168,14 @@ def filings_section(tickers: list[str], since: datetime) -> list[dict]:
                 break
             if form not in WATCH_FORMS:
                 continue
+            # Exact SEC acceptance time, so a filing made before the previous report isn't repeated.
+            acc_t = (r.get("acceptanceDateTime") or [None] * (i + 1))[i]
+            if acc_t:
+                try:
+                    if datetime.fromisoformat(acc_t.replace("Z", "+00:00")) < since:
+                        continue
+                except ValueError:
+                    pass
             acc = r["accessionNumber"][i]
             items = [x.strip() for x in (r.get("items", [""] * (i + 1))[i] or "").split(",") if x.strip()]
             words = [ITEMS[x] for x in items if x in ITEMS and x not in ("9.01",)]
@@ -339,6 +347,21 @@ def ratings_section(sb, tickers: list[str], since: datetime) -> list[dict]:
     return out
 
 
+def shorts_section(sb, tickers: list[str], since: datetime) -> list[dict]:
+    """Short-seller news on these stocks newly published since the window (ingest/short_sellers.py)."""
+    # Fresh only: published on/after the window date AND first seen by our collector after the previous report.
+    rows = sb.table("short_seller_news").select("url,ticker,firms,title,source,published,kind,fetched_at").in_(
+        "ticker", tickers).gte("published", since.date().isoformat()).gte("fetched_at", since.isoformat()).order(
+        "published", desc=True).execute().data or []
+    seen, out = set(), []
+    for r in rows:  # one line per syndicated story
+        k = (r["ticker"], r["title"].lower())
+        if k not in seen:
+            seen.add(k)
+            out.append(r)
+    return out
+
+
 def earnings_section(sb, tickers: list[str], today: date) -> list[dict]:
     rows = sb.table("earnings_calendar").select("ticker,name,next_earnings").in_("ticker", tickers).gte(
         "next_earnings", today.isoformat()).lte("next_earnings", (today + timedelta(days=14)).isoformat()).execute().data or []
@@ -357,6 +380,24 @@ def clip(items: list[str], empty: str, limit: int = 0, max_items: int = 99) -> s
         s, n = nxt, n + 1
     rest = len(items) - n
     return s + (f"; +{rest} more" if rest else "")
+
+
+def shorts_line(rows: list[dict]) -> str:
+    reps: dict[str, list[dict]] = {}
+    com: dict[str, int] = {}
+    for r in rows:
+        if r["kind"] == "report":
+            reps.setdefault(r["ticker"], []).append(r)
+        else:
+            com[r["ticker"]] = com.get(r["ticker"], 0) + 1
+    bits = []
+    for t, rs in reps.items():
+        firms = sorted({f for r in rs for f in (r.get("firms") or [])})
+        bits.append(f"🚨 {t} new short report{' by ' + ', '.join(firms) if firms else ''} ({datetime.fromisoformat(rs[0]['published']).strftime('%d %b')})")
+    for t, n in com.items():
+        if t not in reps:
+            bits.append(f"{t}: {n} short-seller article{'s' if n > 1 else ''} (no new report)")
+    return clip(bits, "None on your stocks")
 
 
 def summarize(content: dict) -> dict:
@@ -383,7 +424,7 @@ def summarize(content: dict) -> dict:
     out = dict(
         insider=clip([f"{x['ticker']} {x['role']} {'bought' if x['side'] == 'buy' else 'sold'} ${x['usd'] / 1e6:,.1f}M" for x in ins],
                      "None on your stocks"),
-        shorts="Not connected yet",
+        shorts=shorts_line(content.get("shorts") or []),
         ratings=clip(rat_txt, "No changes on your stocks"),
         earnings=clip([f"{e['ticker']} {datetime.fromisoformat(e['date']).strftime('%a %d %b')}" for e in ern], "None in the next 2 weeks"),
     )
@@ -487,7 +528,7 @@ def main() -> None:
         content = dict(person=person, date=today.isoformat(), window_start=since.isoformat(), tickers=tickers,
                        market=market, filings=filings_section(tickers, since), insider=insider_section(sb, tickers, since),
                        ratings=ratings_section(sb, tickers, since), earnings=earnings_section(sb, tickers, today),
-                       shorts=None)
+                       shorts=shorts_section(sb, tickers, since))
         summary = summarize(content)
         sb.table("daily_reports").upsert(dict(person=person, report_date=today.isoformat(), window_start=since.isoformat(),
                                               built_at=now.isoformat(), summary=summary, content=content),

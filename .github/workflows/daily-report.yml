@@ -46,6 +46,10 @@ jobs:
         if: ${{ github.event_name == 'schedule' || inputs.template == 'none' }}
         run: python -m ingest.analyst_ratings
         continue-on-error: true
+      - name: Short-seller news for held stocks (Google News + AI target check)
+        if: ${{ github.event_name == 'schedule' || inputs.template == 'none' }}
+        run: python -m ingest.short_sellers
+        continue-on-error: true
       - name: Build reports and send WhatsApp
         if: ${{ github.event_name == 'schedule' || inputs.template == 'none' }}
         run: |

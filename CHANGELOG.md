@@ -2,6 +2,14 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-11-28 — Short-seller feed (/short-sellers) + report line
+
+Author: Riya (with Claude).
+
+- New page **/short-sellers** (in the nav): short-seller reports and commentary on every held stock (last 60 days, held-by Riya/Vijay), plus all short reports in the news market-wide.
+- `ingest/short_sellers.py` (daily-report.yml, before the report): Google News RSS per held stock + a market-wide query; headlines filtered by keywords, then one Groq batch decides who the short seller is betting **against** (keyword matching alone tagged AMD's Hunterbrook report to NVDA). Table `short_seller_news` (migration **`042`**). Why not firm websites: only 2 of 18 short-seller firms have a working RSS feed (Nov 2026).
+- Daily report: "Short-seller reports" line shows 🚨 new reports per stock (firm + date) and article counts; the report page lists them with links.
+
 ## 2026-11-27 — Daily WhatsApp report + /report page; analyst rating changes; Groq model fix
 
 Author: Riya (with Claude).
