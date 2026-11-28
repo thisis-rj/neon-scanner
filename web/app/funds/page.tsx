@@ -347,6 +347,7 @@ function StockTable({ f, rows, watchlist }: { f: Filters; rows: FlowRow[]; watch
             <TableRow className="hover:bg-transparent">
               <TableHead className="w-10 pl-6"><span className="sr-only">Watchlist</span></TableHead>
               <TableHead>Stock</TableHead>
+              {head("net_usd", "Net $ invested", "right", "Dollars bought minus dollars sold by the counted funds: each fund's change in shares × the stock's average price that quarter. No weighting.")}
               {head("label", "Label")}
               {head("net", "Net funds", "right", "Funds buying (opened or added ≥10%) minus funds selling (trimmed ≥10% or exited)")}
               {head("tier_net", "Tier-wtd", "right", "Same count, each fund weighted by tier: S 1.5 · A 1.2 · B 1.0 · C 0.7")}
@@ -384,6 +385,47 @@ function StockRow({ r, showIndustry, watched }: { r: FlowRow; showIndustry: bool
           <span className="truncate text-xs text-muted-foreground" title={r.name ?? ""}>{r.name ?? "—"}</span>
           {showIndustry && <span className="truncate text-[11px] text-muted-foreground/70">{r.industry ?? "Unclassified"}</span>}
         </div>
+      </TableCell>
+      <TableCell className="text-right">
+        {r.net_usd === null ? (
+          <span className="text-muted-foreground/60">—</span>
+        ) : (
+          <details className="group" suppressHydrationWarning>
+            <summary className="flex cursor-pointer list-none flex-col items-end leading-tight tabular-nums [&::-webkit-details-marker]:hidden">
+              <span className={cn("text-base font-semibold", r.net_usd > 0 ? "text-positive" : r.net_usd < 0 ? "text-negative" : "")}>
+                {r.net_usd >= 0 ? "+" : "−"}
+                {fmtUsd(Math.abs(r.net_usd))}
+                <span className="ml-1 inline-block text-[10px] text-muted-foreground transition-transform group-open:rotate-90">▸</span>
+              </span>
+              <span className="text-[11px] text-muted-foreground">
+                <span className="text-positive">{fmtUsd(r.bought_usd ?? 0)} in</span> ·{" "}
+                <span className="text-negative">{fmtUsd(r.sold_usd ?? 0)} out</span>
+              </span>
+            </summary>
+            <div className="mt-2 flex min-w-72 flex-col gap-1 rounded-md border border-border bg-muted/40 p-2 text-left text-xs">
+              {[...r.funds]
+                .sort((a, b) => Math.abs(b.usd ?? 0) - Math.abs(a.usd ?? 0))
+                .map((d) => (
+                  <div key={d.cik} className="flex items-center gap-1.5">
+                    <TierBadge tier={(["S", "A", "B", "C"].includes(d.tier) ? d.tier : "B") as Tier} />
+                    <span className="max-w-56 truncate" title={d.filer}>{d.filer}</span>
+                    <span className={cn("shrink-0", d.event === "opened" || d.event === "added" ? "text-positive" : "text-negative")}>
+                      {EVENT_TEXT[d.event]}
+                    </span>
+                    <span
+                      className={cn(
+                        "ml-auto shrink-0 font-mono tabular-nums",
+                        (d.usd ?? 0) > 0 ? "text-positive" : (d.usd ?? 0) < 0 ? "text-negative" : "text-muted-foreground",
+                      )}
+                    >
+                      {d.usd == null ? "—" : `${d.usd >= 0 ? "+" : "−"}${fmtUsd(Math.abs(d.usd))}`}
+                    </span>
+                  </div>
+                ))}
+              <span className="pt-1 text-[10px] text-muted-foreground">Share change × the stock&apos;s average price that quarter</span>
+            </div>
+          </details>
+        )}
       </TableCell>
       <TableCell>
         {l ? <Badge variant={LABEL_VARIANT[l]}>{l}</Badge> : <span className="text-muted-foreground/60">—</span>}

@@ -29,7 +29,47 @@ export async function fetchFundFlows(f: Pick<Filters, "lag" | "tiers" | "categor
     rows.push(...batch.map(toRow));
     if (batch.length < PAGE) break;
   }
+  await addDollars(rows);
   return { status: "ok", rows };
+}
+
+// Value each fund's share change at the stock's average price in that quarter
+// (ticker_quarter_vwap, filled by ingest/cost_basis.py) and sum per stock, so the
+// page can rank by money moved rather than by how many funds moved.
+async function addDollars(rows: FlowRow[]): Promise<void> {
+  const periods = [...new Set(rows.flatMap((r) => r.funds.map((d) => d.period)))];
+  const px = new Map<string, number>();
+  const sb = supabaseServer();
+  for (const period of periods) {
+    for (let from = 0; ; from += PAGE) {
+      const { data } = await sb
+        .from("ticker_quarter_vwap")
+        .select("ticker,vwap")
+        .eq("period_of_report", period)
+        .order("ticker")
+        .range(from, from + PAGE - 1);
+      for (const v of data ?? []) if (v.vwap != null) px.set(`${v.ticker}|${period}`, Number(v.vwap));
+      if (!data || data.length < PAGE) break;
+    }
+  }
+  for (const r of rows) {
+    let bought = 0, sold = 0, priced = false;
+    for (const d of r.funds) {
+      const p = px.get(`${r.ticker}|${d.period}`);
+      if (p == null) {
+        d.usd = null;
+        continue;
+      }
+      priced = true;
+      const usd = ((d.shares_cur ?? 0) - (d.shares_prev ?? 0) * (d.split || 1)) * p;
+      d.usd = usd;
+      if (usd >= 0) bought += usd;
+      else sold -= usd;
+    }
+    r.net_usd = priced ? bought - sold : null;
+    r.bought_usd = priced ? bought : null;
+    r.sold_usd = priced ? sold : null;
+  }
 }
 
 // Postgres numeric arrives as a string or number depending on size; make every
@@ -49,5 +89,8 @@ function toRow(r: Record<string, unknown>): FlowRow {
     shares_cur: d.shares_cur === null || d.shares_cur === undefined ? null : Number(d.shares_cur),
     split: Number(d.split ?? 1),
   }));
+  out.net_usd = null;
+  out.bought_usd = null;
+  out.sold_usd = null;
   return out as FlowRow;
 }

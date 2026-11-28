@@ -18,6 +18,7 @@ export type FundDetail = {
   split: number;
   period: string;
   prev_period: string;
+  usd?: number | null; // this fund's change in $ at the quarter's average price (fund-flows.ts)
 };
 
 /** One row of fund_flows(). Numeric columns arrive as numbers (or null). */
@@ -50,6 +51,12 @@ export type FlowRow = {
   activist_latest: string | null;
   funds: FundDetail[];
   computed_at: string | null;
+  // Dollars moved (Riya, Nov 2026): Σ over counted funds of (shares after − shares
+  // before × split) × the stock's average price in that quarter (ticker_quarter_vwap).
+  // Added in fund-flows.ts, not in the SQL function; null when no quarter price.
+  net_usd: number | null;
+  bought_usd: number | null;
+  sold_usd: number | null;
 };
 
 // ─── Label ────────────────────────────────────────────────────────────────
@@ -96,7 +103,7 @@ export const CATEGORIES = ["value", "concentrated", "growth", "activist", "macro
 export const UNCLASSIFIED = "Unclassified";
 
 export const STOCK_SORTS = [
-  "label", "net", "tier_net", "conviction_max", "conviction_sum", "streak",
+  "net_usd", "label", "net", "tier_net", "conviction_max", "conviction_sum", "streak",
   "insiders", "activist", "market_cap", "return_6m", "latest_filing",
 ] as const;
 export type StockSort = (typeof STOCK_SORTS)[number];
@@ -153,7 +160,7 @@ export function parseParams(p: Params): Filters {
   const view = industry || one(p, "view") === "stocks" ? "stocks" : "industries";
   const sorts: readonly string[] = view === "stocks" ? STOCK_SORTS : ROLLUP_SORTS;
   const sortParam = one(p, "sort");
-  const sort = (sortParam && sorts.includes(sortParam) ? sortParam : view === "stocks" ? "label" : "total_net") as
+  const sort = (sortParam && sorts.includes(sortParam) ? sortParam : view === "stocks" ? "net_usd" : "total_net") as
     | StockSort
     | RollupSort;
   const dirParam = one(p, "dir");
@@ -202,7 +209,7 @@ export function toQuery(f: Filters, overrides: Record<string, string | null> = {
   for (const [k, v] of nums) if (v !== null) q[k] = String(v);
   if (f.label) q.label = f.label;
   if (f.watchlist) q.watch = "1";
-  const defaultSort = f.view === "stocks" ? "label" : "total_net";
+  const defaultSort = f.view === "stocks" ? "net_usd" : "total_net";
   if (f.sort !== defaultSort || f.dir !== defaultDir(f.sort)) {
     q.sort = f.sort;
     q.dir = f.dir;
@@ -251,6 +258,7 @@ export function applyFilters(rows: FlowRow[], f: Filters, watchlist: Set<string>
 
 function stockValue(r: FlowRow, key: StockSort): number | null {
   switch (key) {
+    case "net_usd": return r.net_usd;
     case "label": return labelRank(r);
     case "net": return r.net;
     case "tier_net": return r.tier_net;

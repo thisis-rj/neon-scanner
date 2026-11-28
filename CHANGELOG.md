@@ -2,6 +2,14 @@
 
 What changed, why, and what is still open. Newest first. Add an entry when you change behavior that someone else relies on.
 
+## 2026-11-28 — /funds: rank stocks by dollars invested (Net $), per-fund dropdown
+
+Author: Riya (with Claude). Vijay: your counting (fund_flows() SQL) is untouched.
+
+- New **Net $ invested** column, now the default sort (highest first): Σ over the counted funds of (shares after − shares before × split) × the stock's average price that quarter (`ticker_quarter_vwap`). Computed in `web/lib/fund-flows.ts` after the RPC; no weighting. Why: counts treated a $100K add like a $6B one (INTC showed "Strong +6" while funds net-sold ~$4.1B).
+- Click the Net $ value for a dropdown of every fund's move: tier, full fund name, opened/added/trimmed/exited, $.
+- Label / Net funds / Tier-wtd / Biggest bet etc. unchanged; any header still re-sorts.
+
 ## 2026-11-28 — WhatsApp report: market takeaway from Short Squeez + Money Stuff
 
 Author: Riya (with Claude).
