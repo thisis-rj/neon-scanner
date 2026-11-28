@@ -12,6 +12,10 @@ on:
         description: "Send WhatsApp messages (false = build only)"
         type: boolean
         default: true
+      since:
+        description: "Testing only: look back to this UTC time (e.g. 2026-11-25T13:00:00+00:00); empty = since the previous report"
+        type: string
+        default: ""
       template:
         description: "Instead of a report: submit the WhatsApp template to Meta, or check its approval"
         type: choice
@@ -60,6 +64,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.send }}" = "true" ]; then
             python -m ingest.daily_report --send
+          elif [ -n "${{ inputs.since }}" ]; then
+            python -m ingest.daily_report --print --since "${{ inputs.since }}" | grep -E '"takeaway"|built'
           else
             python -m ingest.daily_report
           fi
